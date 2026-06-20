@@ -4,6 +4,7 @@ Pastila OS — Task Bot
 """
 
 import os
+import asyncio
 import logging
 import datetime
 import json
@@ -78,6 +79,35 @@ def append_task_to_sheet(date_str, who, task_title, deadline, status):
     except Exception as e:
         logger.error("Ошибка записи в таблицу: %s", e)
         return False
+
+
+# Статусы, которые считаем «закрытыми» — такие задачи в /list не показываем
+CLOSED_MARKERS = ("DONE", "CANCELLED")
+
+
+def read_open_tasks():
+    """Читает таблицу и группирует открытые задачи по исполнителю.
+
+    Открытая = статус не содержит DONE/CANCELLED.
+    Возвращает dict {кто: [ {title, deadline, status}, ... ]}.
+    Функция блокирующая (gspread синхронный) — вызывать через asyncio.to_thread.
+    """
+    ws = get_worksheet()
+    records = ws.get_all_records()  # первая строка таблицы — заголовки
+    groups = {}
+    for row in records:
+        status = str(row.get("Статус", "")).strip()
+        if any(marker in status.upper() for marker in CLOSED_MARKERS):
+            continue
+        who = str(row.get("Кто", "")).strip() or "—"
+        groups.setdefault(who, []).append(
+            {
+                "title": str(row.get("Задача", "")).strip(),
+                "deadline": str(row.get("Дедлайн", "")).strip() or "Backlog",
+                "status": status,
+            }
+        )
+    return groups
 
 
 # ------------------------------------------------------------------
@@ -351,11 +381,44 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/list — показать открытые задачи (статус ≠ DONE/CANCELLED), сгруппированные по исполнителю."""
+    try:
+        # gspread синхронный — уводим чтение в поток, чтобы не блокировать бота
+        groups = await asyncio.to_thread(read_open_tasks)
+    except Exception as e:
+        logger.error("Ошибка чтения таблицы для /list: %s", e)
+        await update.message.reply_text(
+            "⚠️ Не получилось прочитать таблицу. Попробуй ещё раз чуть позже."
+        )
+        return
+
+    if not groups:
+        await update.message.reply_text("🎉 Открытых задач нет — всё закрыто!")
+        return
+
+    # порядок групп: сначала Лена, Глеб, Лена + Глеб, затем прочие
+    order = {who: i for i, who in enumerate(WHO_OPTIONS)}
+    lines = ["📋 ОТКРЫТЫЕ ЗАДАЧИ", ""]
+    total = 0
+    for who in sorted(groups, key=lambda w: (order.get(w, 99), w)):
+        tasks = groups[who]
+        total += len(tasks)
+        lines.append(f"👤 {who} — {len(tasks)}")
+        for t in tasks:
+            title = t["title"] or "(без названия)"
+            lines.append(f"   {t['status']}  {title}  ·  🗓️ {t['deadline']}")
+        lines.append("")
+    lines.append(f"Итого открытых: {total}")
+    await update.message.reply_text("\n".join(lines).strip())
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
         "Команды:\n"
         "/new — создать задачу\n"
+        "/list — открытые задачи\n"
         "/cancel — отменить"
     )
 
@@ -397,6 +460,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(conv)
 
     logger.info("Бот запущен.")
