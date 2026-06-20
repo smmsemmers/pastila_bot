@@ -41,18 +41,6 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # КОНФИГ — берётся из переменных окружения (Render → Environment)
 # ------------------------------------------------------------------
-BOT_TOKEN = os.environ["BOT_TOKEN"]                 # токен от BotFather
-GROUP_CHAT_ID = int(os.environ["GROUP_CHAT_ID"])    # id группы (отрицательное, начинается с -100)
-THREAD_LENA = int(os.environ["THREAD_LENA"])        # message_thread_id топика Tasks — Лена
-THREAD_GLEB = int(os.environ["THREAD_GLEB"])        # message_thread_id топика Tasks — Глеб
-SHEET_ID = os.environ["SHEET_ID"]                   # id Google-таблицы
-SHEET_NAME = os.environ.get("SHEET_NAME", "Sheet1") # имя листа
-
-# Юзернеймы для тегов в задаче
-TAG_LENA = os.environ.get("TAG_LENA", "@elenaisanewleet")
-TAG_GLEB = os.environ.get("TAG_GLEB", "@foxruso")
-
-
 def _int_env(name, default):
     """int из env с безопасным фолбэком на default."""
     try:
@@ -60,6 +48,20 @@ def _int_env(name, default):
     except ValueError:
         logger.warning("Неверное значение %s — использую %s", name, default)
         return default
+
+
+BOT_TOKEN = os.environ["BOT_TOKEN"]                  # обязателен — без него не запуститься
+# Остальные id можно задать позже: бот стартует и с одним BOT_TOKEN, чтобы через /id
+# собрать chat_id и id топиков. Чего не хватает — будет видно в логах при старте.
+GROUP_CHAT_ID = _int_env("GROUP_CHAT_ID", 0)         # id группы (-100…)
+THREAD_LENA = _int_env("THREAD_LENA", 0)             # message_thread_id топика Лены
+THREAD_GLEB = _int_env("THREAD_GLEB", 0)             # message_thread_id топика Глеба
+SHEET_ID = os.environ.get("SHEET_ID", "")            # id Google-таблицы
+SHEET_NAME = os.environ.get("SHEET_NAME", "Sheet1")  # имя листа
+
+# Юзернеймы для тегов в задаче
+TAG_LENA = os.environ.get("TAG_LENA", "@elenaisanewleet")
+TAG_GLEB = os.environ.get("TAG_GLEB", "@foxruso")
 
 
 # Утренний дайджест (#3): во сколько и в какой таймзоне слать
@@ -798,6 +800,20 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏰ Разослал алерты по задачам на завтра: {n}.")
 
 
+async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/id — показать chat_id и id топика. Помогает собрать переменные при настройке."""
+    chat = update.effective_chat
+    thread_id = update.message.message_thread_id  # None вне топиков
+    lines = ["🆔 Идентификаторы для настройки:", "", f"GROUP_CHAT_ID = `{chat.id}`"]
+    if thread_id is not None:
+        lines.append(f"THREAD этого топика = `{thread_id}`")
+        lines.append("")
+        lines.append("→ впиши его в THREAD_LENA или THREAD_GLEB (смотря чей это топик).")
+    else:
+        lines.append("_Это General или личка — id топика нет. Запусти /id внутри нужного топика._")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
@@ -807,6 +823,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — сменить статус (в ответ на задачу)\n"
         "/digest — дайджест дедлайнов на сегодня\n"
         "/alerts — алерты по дедлайнам на завтра\n"
+        "/id — узнать chat_id и id топика (для настройки)\n"
         "/cancel — отменить"
     )
 
@@ -815,6 +832,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ЗАПУСК
 # ------------------------------------------------------------------
 def main():
+    # подсказка в логах: чего ещё не хватает для полноценной работы
+    missing = [
+        n for n in ("GROUP_CHAT_ID", "THREAD_LENA", "THREAD_GLEB", "SHEET_ID")
+        if not os.environ.get(n)
+    ]
+    if missing:
+        logger.warning(
+            "Не заданы переменные: %s. Бот запустится, но постинг и таблица не заработают. "
+            "Запусти /id в нужных топиках, узнай id и добавь переменные в Render.",
+            ", ".join(missing),
+        )
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
@@ -848,6 +877,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("digest", cmd_digest))
