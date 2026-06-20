@@ -32,3 +32,8 @@ services:
         value: "0"
       - key: TZ
         value: "Europe/Moscow"
+      # Дедлайн-алерты (задачи на завтра)
+      - key: ALERT_HOUR
+        value: "12"
+      - key: ALERT_MINUTE
+        value: "0"

@@ -73,6 +73,10 @@ except Exception:
     logger.warning("Таймзона %s недоступна — использую фиксированный UTC+3 (МСК)", TIMEZONE)
     TZINFO = datetime.timezone(datetime.timedelta(hours=3))
 
+# Дедлайн-алерты (#4): во сколько проверять задачи с дедлайном на завтра
+ALERT_HOUR = _int_env("ALERT_HOUR", 12)
+ALERT_MINUTE = _int_env("ALERT_MINUTE", 0)
+
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
 # ------------------------------------------------------------------
@@ -155,14 +159,11 @@ def update_task_status(title, new_status):
     return True
 
 
-def read_due_today(today=None):
-    """Открытые задачи с дедлайном = сегодня.
+def read_tasks_due(date_str):
+    """Открытые задачи с дедлайном = date_str (формат «ДД.ММ»).
 
-    today — строка «ДД.ММ» (по умолчанию текущая дата в TZINFO).
     Возвращает список dict {who, title, status}. Блокирующая — через asyncio.to_thread.
     """
-    if today is None:
-        today = datetime.datetime.now(TZINFO).strftime("%d.%m")
     ws = get_worksheet()
     records = ws.get_all_records()  # первая строка — заголовки
     due = []
@@ -170,8 +171,8 @@ def read_due_today(today=None):
         status = str(row.get("Статус", "")).strip()
         if any(m in status.upper() for m in CLOSED_MARKERS):
             continue
-        # сравниваем нормализованный дедлайн строки с сегодняшней датой
-        if parse_deadline(str(row.get("Дедлайн", ""))) == today:
+        # сравниваем нормализованный дедлайн строки с искомой датой
+        if parse_deadline(str(row.get("Дедлайн", ""))) == date_str:
             due.append(
                 {
                     "who": str(row.get("Кто", "")).strip() or "—",
@@ -180,6 +181,13 @@ def read_due_today(today=None):
                 }
             )
     return due
+
+
+def read_due_today(today=None):
+    """Открытые задачи с дедлайном = сегодня (по умолчанию — текущая дата в TZINFO)."""
+    if today is None:
+        today = datetime.datetime.now(TZINFO).strftime("%d.%m")
+    return read_tasks_due(today)
 
 
 # ------------------------------------------------------------------
@@ -733,6 +741,63 @@ async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📨 Отправил дайджест в группу. Задач сегодня — {n}.")
 
 
+# маршрутизация алерта по исполнителю: (топик, тег)
+def _alert_targets(who):
+    if who == "Лена":
+        return [(THREAD_LENA, TAG_LENA)]
+    if who == "Глеб":
+        return [(THREAD_GLEB, TAG_GLEB)]
+    if who == "Лена + Глеб":
+        return [(THREAD_LENA, TAG_LENA), (THREAD_GLEB, TAG_GLEB)]
+    return []
+
+
+async def build_and_send_alerts(bot):
+    """Шлёт алерты по задачам с дедлайном = завтра, тегая исполнителя в его топике.
+    Возвращает число отправленных сообщений, или -1 при ошибке чтения."""
+    tomorrow = (datetime.datetime.now(TZINFO) + datetime.timedelta(days=1)).strftime("%d.%m")
+    try:
+        due = await asyncio.to_thread(read_tasks_due, tomorrow)
+    except Exception as e:
+        logger.error("Алерты: не смог прочитать таблицу: %s", e)
+        return -1
+    count = 0
+    for t in due:
+        targets = _alert_targets(t["who"])
+        if not targets:
+            continue  # неизвестный исполнитель — пропускаем
+        body = f"⏰ Дедлайн завтра ({tomorrow})!\n{t['status']}  {t['title']}"
+        for thread_id, tag in targets:
+            try:
+                await bot.send_message(
+                    chat_id=GROUP_CHAT_ID,
+                    message_thread_id=thread_id,
+                    text=f"{tag}\n{body}",
+                )
+                count += 1
+            except Exception as e:
+                logger.error("Алерт: не смог отправить в топик %s: %s", thread_id, e)
+    return count
+
+
+async def send_deadline_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Колбэк ежедневного задания JobQueue."""
+    n = await build_and_send_alerts(context.bot)
+    if n == 0:
+        logger.info("Алерты: на завтра дедлайнов нет")
+
+
+async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/alerts — ручной запуск дедлайн-алертов (для проверки)."""
+    n = await build_and_send_alerts(context.bot)
+    if n == -1:
+        await update.message.reply_text("⚠️ Не смог прочитать таблицу. Попробуй позже.")
+    elif n == 0:
+        await update.message.reply_text("На завтра дедлайнов нет 👍")
+    else:
+        await update.message.reply_text(f"⏰ Разослал алерты по задачам на завтра: {n}.")
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
@@ -741,6 +806,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list — открытые задачи\n"
         "/status — сменить статус (в ответ на задачу)\n"
         "/digest — дайджест дедлайнов на сегодня\n"
+        "/alerts — алерты по дедлайнам на завтра\n"
         "/cancel — отменить"
     )
 
@@ -785,20 +851,28 @@ def main():
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("digest", cmd_digest))
+    app.add_handler(CommandHandler("alerts", cmd_alerts))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(conv)
 
-    # ежедневный дайджест в DIGEST_HOUR:DIGEST_MINUTE по таймзоне TIMEZONE
+    # ежедневные задания: дайджест (дедлайн сегодня) и алерты (дедлайн завтра)
     if app.job_queue is not None:
         app.job_queue.run_daily(
             send_digest,
             time=datetime.time(hour=DIGEST_HOUR, minute=DIGEST_MINUTE, tzinfo=TZINFO),
         )
-        logger.info("Дайджест запланирован на %02d:%02d (%s)", DIGEST_HOUR, DIGEST_MINUTE, TIMEZONE)
+        app.job_queue.run_daily(
+            send_deadline_alerts,
+            time=datetime.time(hour=ALERT_HOUR, minute=ALERT_MINUTE, tzinfo=TZINFO),
+        )
+        logger.info(
+            "Запланировано: дайджест %02d:%02d, алерты %02d:%02d (%s)",
+            DIGEST_HOUR, DIGEST_MINUTE, ALERT_HOUR, ALERT_MINUTE, TIMEZONE,
+        )
     else:
         logger.warning(
-            "JobQueue недоступен — дайджест не запланирован. Установи extra: "
+            "JobQueue недоступен — дайджест и алерты не запланированы. Установи extra: "
             "python-telegram-bot[job-queue]"
         )
 
