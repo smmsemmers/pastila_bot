@@ -67,12 +67,12 @@ def get_worksheet():
     return client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
 
 
-def append_task_to_sheet(date_str, who, task_title, deadline, status):
+def append_task_to_sheet(date_str, who, task_title, deadline, status, link=""):
     """Добавляет строку в таблицу: Дата | Кто | Задача | Дедлайн | Статус | Ссылка."""
     try:
         ws = get_worksheet()
         ws.append_row(
-            [date_str, who, task_title, deadline, status, ""],
+            [date_str, who, task_title, deadline, status, link],
             value_input_option="USER_ENTERED",
         )
         logger.info("Строка добавлена в таблицу: %s", task_title)
@@ -274,6 +274,16 @@ def parse_deadline(text):
     return f"{day:02d}.{month:02d}"
 
 
+def message_link(chat_id, message_id, thread_id=None):
+    """Строит deep-link на сообщение супергруппы:
+    t.me/c/<internal>/[<thread>/]<message_id>, где internal — id чата без префикса -100."""
+    internal = str(chat_id)
+    internal = internal[4:] if internal.startswith("-100") else internal.lstrip("-")
+    if thread_id:
+        return f"https://t.me/c/{internal}/{thread_id}/{message_id}"
+    return f"https://t.me/c/{internal}/{message_id}"
+
+
 # ------------------------------------------------------------------
 # ДИАЛОГ
 # ------------------------------------------------------------------
@@ -432,22 +442,32 @@ async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_T
     elif who == "Лена + Глеб":
         targets = [THREAD_LENA, THREAD_GLEB]
 
-    # постим в группу
+    # постим в группу; запоминаем первое отправленное сообщение для ссылки
+    first_sent = None
+    first_thread = None
     for thread_id in targets:
         try:
-            await context.bot.send_message(
+            sent = await context.bot.send_message(
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=thread_id,
                 text=task_text,
                 reply_markup=quick_status_keyboard(),
             )
+            if first_sent is None:
+                first_sent = sent
+                first_thread = thread_id
         except Exception as e:
             logger.error("Ошибка постинга в топик %s: %s", thread_id, e)
+
+    # ссылка на задачу (deep-link на первое опубликованное сообщение)
+    link = ""
+    if first_sent is not None:
+        link = message_link(GROUP_CHAT_ID, first_sent.message_id, first_thread)
 
     # пишем в таблицу
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     sheet_ok = append_task_to_sheet(
-        today, who, data.get("title", ""), data.get("deadline", ""), status
+        today, who, data.get("title", ""), data.get("deadline", ""), status, link
     )
 
     # подтверждение пользователю
