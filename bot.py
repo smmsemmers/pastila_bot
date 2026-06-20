@@ -159,6 +159,11 @@ STATUS_OPTIONS = [
     "⚫️ CANCELLED",
 ]
 
+# Быстрые статусы для кнопок прямо под задачей (#8): код → подпись на кнопке
+QUICK_STATUS = [("WIP", "🔵 В работу"), ("REVIEW", "🟣 Ревью"), ("DONE", "✅ Done")]
+# код → каноничный статус из STATUS_OPTIONS (например "DONE" → "🟢 DONE")
+STATUS_BY_CODE = {opt.split(" ", 1)[1]: opt for opt in STATUS_OPTIONS}
+
 
 # ------------------------------------------------------------------
 # ХЕЛПЕРЫ ДЛЯ КЛАВИАТУР
@@ -190,6 +195,15 @@ def skip_keyboard(step):
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("⏭ Пропустить", callback_data=f"skip::{step}")]]
     )
+
+
+def quick_status_keyboard():
+    """Кнопки быстрой смены статуса под опубликованной задачей."""
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"quick::{code}")
+        for code, label in QUICK_STATUS
+    ]
+    return InlineKeyboardMarkup([buttons])
 
 
 # ------------------------------------------------------------------
@@ -397,6 +411,7 @@ async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_T
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=thread_id,
                 text=task_text,
+                reply_markup=quick_status_keyboard(),
             )
         except Exception as e:
             logger.error("Ошибка постинга в топик %s: %s", thread_id, e)
@@ -540,6 +555,48 @@ async def on_set_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("status_edit", None)
 
 
+async def on_quick_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Нажата кнопка статуса под опубликованной задачей — меняем статус в один тап."""
+    query = update.callback_query
+    code = query.data.split("::", 1)[1]
+    new_status = STATUS_BY_CODE.get(code)
+    if not new_status:
+        await query.answer("Неизвестный статус")
+        return
+
+    # сама задача — это текст сообщения с кнопкой, берём название оттуда
+    text = query.message.text or query.message.caption or ""
+    title = extract_task_title(text)
+    if not title:
+        await query.answer("Не вижу задачу в этом сообщении", show_alert=True)
+        return
+
+    # 1) обновляем строку в таблице
+    try:
+        found = await asyncio.to_thread(update_task_status, title, new_status)
+        sheet_result = "ok" if found else "notfound"
+    except Exception as e:
+        logger.error("Ошибка смены статуса кнопкой: %s", e)
+        sheet_result = "error"
+
+    # 2) обновляем текст задачи (кнопки оставляем на месте).
+    #    Если статус уже такой — текст не меняем, чтобы не ловить "message is not modified".
+    new_text = replace_status_line(text, new_status)
+    if new_text and new_text != text:
+        try:
+            await query.edit_message_text(new_text, reply_markup=quick_status_keyboard())
+        except Exception as e:
+            logger.error("Не смог обновить сообщение задачи кнопкой: %s", e)
+
+    # 3) короткий тост пользователю
+    if sheet_result == "ok":
+        await query.answer(f"Статус: {new_status}")
+    elif sheet_result == "notfound":
+        await query.answer("Обновил в сообщении, но в таблице задачи нет", show_alert=True)
+    else:
+        await query.answer("Таблица недоступна — обновил только сообщение", show_alert=True)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
@@ -591,6 +648,7 @@ def main():
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
+    app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(conv)
 
     logger.info("Бот запущен.")
