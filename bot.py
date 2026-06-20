@@ -16,6 +16,7 @@ from google.oauth2.service_account import Credentials
 
 from telegram import (
     Update,
+    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
@@ -831,6 +832,21 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------------
 # ЗАПУСК
 # ------------------------------------------------------------------
+async def _set_commands(app):
+    """Регистрирует меню команд — всплывает подсказкой при вводе «/» в чате."""
+    await app.bot.set_my_commands(
+        [
+            BotCommand("new", "Создать задачу"),
+            BotCommand("list", "Открытые задачи"),
+            BotCommand("status", "Сменить статус (ответом на задачу)"),
+            BotCommand("digest", "Дедлайны на сегодня"),
+            BotCommand("alerts", "Дедлайны на завтра"),
+            BotCommand("cancel", "Отменить создание задачи"),
+            BotCommand("start", "Справка"),
+        ]
+    )
+
+
 def main():
     # подсказка в логах: чего ещё не хватает для полноценной работы
     missing = [
@@ -844,7 +860,7 @@ def main():
             ", ".join(missing),
         )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_set_commands).build()
 
     conv = ConversationHandler(
         entry_points=[CommandHandler("new", cmd_new)],
