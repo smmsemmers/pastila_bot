@@ -428,6 +428,22 @@ async def get_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TAGS
 
 
+async def get_materials_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """На шаге материалов прислали файл/фото — сохраняем ссылку на это сообщение."""
+    msg = update.message
+    link = message_link(msg.chat_id, msg.message_id, msg.message_thread_id)
+    if msg.document and msg.document.file_name:
+        context.user_data["materials"] = f"{msg.document.file_name} — {link}"
+    else:
+        context.user_data["materials"] = link
+    await msg.reply_text(
+        "📎 Принял файл. 🏷️ Теги (например: #excel #клиент #баг).\n\n"
+        "Напиши текстом или пропусти:",
+        reply_markup=skip_keyboard("tags"),
+    )
+    return TAGS
+
+
 async def get_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["tags"] = update.message.text.strip()
     await update.message.reply_text("🚦 Статус задачи?", reply_markup=status_keyboard())
@@ -1040,6 +1056,7 @@ def main():
             ],
             MATERIALS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, get_materials),
+                MessageHandler(filters.Document.ALL | filters.PHOTO, get_materials_file),
                 CallbackQueryHandler(skip_step, pattern="^skip::"),
             ],
             TAGS: [
