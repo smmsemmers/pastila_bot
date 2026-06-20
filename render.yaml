@@ -7,6 +7,10 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python bot.py"
     envVars:
+      # ВАЖНО: python-telegram-bot 21.6 несовместим с Python 3.14 (ломается run_polling).
+      # Закрепляем 3.12 (Render по умолчанию берёт самую новую версию).
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       - key: BOT_TOKEN
         sync: false
       - key: GROUP_CHAT_ID
