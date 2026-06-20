@@ -9,6 +9,7 @@ import asyncio
 import logging
 import datetime
 import json
+from zoneinfo import ZoneInfo
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -50,6 +51,27 @@ SHEET_NAME = os.environ.get("SHEET_NAME", "Sheet1") # имя листа
 # Юзернеймы для тегов в задаче
 TAG_LENA = os.environ.get("TAG_LENA", "@elenaisanewleet")
 TAG_GLEB = os.environ.get("TAG_GLEB", "@foxruso")
+
+
+def _int_env(name, default):
+    """int из env с безопасным фолбэком на default."""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        logger.warning("Неверное значение %s — использую %s", name, default)
+        return default
+
+
+# Утренний дайджест (#3): во сколько и в какой таймзоне слать
+DIGEST_HOUR = _int_env("DIGEST_HOUR", 12)
+DIGEST_MINUTE = _int_env("DIGEST_MINUTE", 0)
+TIMEZONE = os.environ.get("TZ", "Europe/Moscow")
+try:
+    TZINFO = ZoneInfo(TIMEZONE)
+except Exception:
+    # если в системе нет базы таймзон — Москва это фиксированный UTC+3 (без перехода на лето)
+    logger.warning("Таймзона %s недоступна — использую фиксированный UTC+3 (МСК)", TIMEZONE)
+    TZINFO = datetime.timezone(datetime.timedelta(hours=3))
 
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
@@ -131,6 +153,33 @@ def update_task_status(title, new_status):
         return False
     ws.update_cell(target_row, 5, new_status)  # 5 — колонка «Статус»
     return True
+
+
+def read_due_today(today=None):
+    """Открытые задачи с дедлайном = сегодня.
+
+    today — строка «ДД.ММ» (по умолчанию текущая дата в TZINFO).
+    Возвращает список dict {who, title, status}. Блокирующая — через asyncio.to_thread.
+    """
+    if today is None:
+        today = datetime.datetime.now(TZINFO).strftime("%d.%m")
+    ws = get_worksheet()
+    records = ws.get_all_records()  # первая строка — заголовки
+    due = []
+    for row in records:
+        status = str(row.get("Статус", "")).strip()
+        if any(m in status.upper() for m in CLOSED_MARKERS):
+            continue
+        # сравниваем нормализованный дедлайн строки с сегодняшней датой
+        if parse_deadline(str(row.get("Дедлайн", ""))) == today:
+            due.append(
+                {
+                    "who": str(row.get("Кто", "")).strip() or "—",
+                    "title": str(row.get("Задача", "")).strip(),
+                    "status": status,
+                }
+            )
+    return due
 
 
 # ------------------------------------------------------------------
@@ -645,6 +694,45 @@ async def on_quick_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Таблица недоступна — обновил только сообщение", show_alert=True)
 
 
+async def build_and_send_digest(bot):
+    """Собирает дайджест дедлайнов на сегодня и шлёт в General.
+    Возвращает число задач, или -1 при ошибке чтения таблицы."""
+    try:
+        due = await asyncio.to_thread(read_due_today)
+    except Exception as e:
+        logger.error("Дайджест: не смог прочитать таблицу: %s", e)
+        return -1
+    today_str = datetime.datetime.now(TZINFO).strftime("%d.%m")
+    if not due:
+        return 0
+    lines = [f"☀️ Доброе утро! Дедлайн сегодня — {today_str}:", ""]
+    for t in due:
+        lines.append(f"   {t['status']}  {t['title']} — 👤 {t['who']}")
+    lines.append("")
+    lines.append(f"{TAG_LENA} {TAG_GLEB}")
+    # General — отправка без message_thread_id
+    await bot.send_message(chat_id=GROUP_CHAT_ID, text="\n".join(lines))
+    return len(due)
+
+
+async def send_digest(context: ContextTypes.DEFAULT_TYPE):
+    """Колбэк ежедневного задания JobQueue."""
+    n = await build_and_send_digest(context.bot)
+    if n == 0:
+        logger.info("Дайджест: на сегодня задач с дедлайном нет — не отправляю")
+
+
+async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/digest — ручной запуск дайджеста (удобно проверить после деплоя)."""
+    n = await build_and_send_digest(context.bot)
+    if n == -1:
+        await update.message.reply_text("⚠️ Не смог прочитать таблицу. Попробуй позже.")
+    elif n == 0:
+        await update.message.reply_text("На сегодня задач с дедлайном нет 🎉")
+    else:
+        await update.message.reply_text(f"📨 Отправил дайджест в группу. Задач сегодня — {n}.")
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
@@ -652,6 +740,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new — создать задачу\n"
         "/list — открытые задачи\n"
         "/status — сменить статус (в ответ на задачу)\n"
+        "/digest — дайджест дедлайнов на сегодня\n"
         "/cancel — отменить"
     )
 
@@ -695,9 +784,23 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(conv)
+
+    # ежедневный дайджест в DIGEST_HOUR:DIGEST_MINUTE по таймзоне TIMEZONE
+    if app.job_queue is not None:
+        app.job_queue.run_daily(
+            send_digest,
+            time=datetime.time(hour=DIGEST_HOUR, minute=DIGEST_MINUTE, tzinfo=TZINFO),
+        )
+        logger.info("Дайджест запланирован на %02d:%02d (%s)", DIGEST_HOUR, DIGEST_MINUTE, TIMEZONE)
+    else:
+        logger.warning(
+            "JobQueue недоступен — дайджест не запланирован. Установи extra: "
+            "python-telegram-bot[job-queue]"
+        )
 
     logger.info("Бот запущен.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -25,3 +25,10 @@ services:
         value: "@elenaisanewleet"
       - key: TAG_GLEB
         value: "@foxruso"
+      # Утренний дайджест: время и таймзона
+      - key: DIGEST_HOUR
+        value: "12"
+      - key: DIGEST_MINUTE
+        value: "0"
+      - key: TZ
+        value: "Europe/Moscow"
