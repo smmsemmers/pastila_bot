@@ -41,3 +41,10 @@ services:
         value: "12"
       - key: ALERT_MINUTE
         value: "0"
+      # Голосовой ввод (Whisper + GPT). Без ключа фича просто выключена.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: "gpt-4o-mini"
+      - key: WHISPER_MODEL
+        value: "whisper-1"

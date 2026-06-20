@@ -11,6 +11,7 @@ import datetime
 import json
 from zoneinfo import ZoneInfo
 
+import httpx
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -79,6 +80,11 @@ except Exception:
 # Дедлайн-алерты (#4): во сколько проверять задачи с дедлайном на завтра
 ALERT_HOUR = _int_env("ALERT_HOUR", 12)
 ALERT_MINUTE = _int_env("ALERT_MINUTE", 0)
+
+# Голосовой ввод (#6): ключ OpenAI (Whisper + GPT). Пусто → фича выключена.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "whisper-1")
 
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
@@ -471,15 +477,12 @@ async def skip_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    status = query.data.split("::", 1)[1]
-    context.user_data["status"] = status
-    await query.edit_message_text(f"🚦 Статус: {status}")
+async def publish_task(bot, data):
+    """Постит задачу в топик(и) исполнителя и пишет строку в таблицу.
 
-    data = context.user_data
-    # добавляем тег исполнителя в текст
+    Возвращает (posted_any: bool, sheet_ok: bool).
+    Переиспользуется диалогом /new и голосовым вводом.
+    """
     who = data.get("who", "")
     tag_line = ""
     if who == "Лена":
@@ -493,7 +496,6 @@ async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_T
     if tag_line:
         task_text = f"{tag_line}\n{task_text}"
 
-    # определяем топик(и) куда постить
     targets = []
     if who == "Лена":
         targets = [THREAD_LENA]
@@ -502,12 +504,12 @@ async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_T
     elif who == "Лена + Глеб":
         targets = [THREAD_LENA, THREAD_GLEB]
 
-    # постим в группу; запоминаем первое отправленное сообщение для ссылки
+    # постим в группу; запоминаем первое сообщение для ссылки
     first_sent = None
     first_thread = None
     for thread_id in targets:
         try:
-            sent = await context.bot.send_message(
+            sent = await bot.send_message(
                 chat_id=GROUP_CHAT_ID,
                 message_thread_id=thread_id,
                 text=task_text,
@@ -519,23 +521,37 @@ async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.error("Ошибка постинга в топик %s: %s", thread_id, e)
 
-    # ссылка на задачу (deep-link на первое опубликованное сообщение)
     link = ""
     if first_sent is not None:
         link = message_link(GROUP_CHAT_ID, first_sent.message_id, first_thread)
 
-    # пишем в таблицу
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    today = datetime.datetime.now(TZINFO).strftime("%Y-%m-%d")
     sheet_ok = append_task_to_sheet(
-        today, who, data.get("title", ""), data.get("deadline", ""), status, link
+        today, who, data.get("title", ""), data.get("deadline", ""),
+        data.get("status", "🟡 TODO"), link,
     )
+    return (first_sent is not None), sheet_ok
 
-    # подтверждение пользователю
-    confirm = "✅ Задача создана и отправлена в топик."
-    if sheet_ok:
-        confirm += "\n📊 Записана в таблицу."
-    else:
-        confirm += "\n⚠️ В таблицу записать не удалось (проверь доступ)."
+
+async def get_status_and_publish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    status = query.data.split("::", 1)[1]
+    context.user_data["status"] = status
+    await query.edit_message_text(f"🚦 Статус: {status}")
+
+    posted, sheet_ok = await publish_task(context.bot, context.user_data)
+
+    confirm = (
+        "✅ Задача создана и отправлена в топик."
+        if posted
+        else "⚠️ Не удалось запостить в топик."
+    )
+    confirm += (
+        "\n📊 Записана в таблицу."
+        if sheet_ok
+        else "\n⚠️ В таблицу записать не удалось (проверь доступ)."
+    )
     await query.message.reply_text(confirm)
 
     context.user_data.clear()
@@ -801,6 +817,148 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏰ Разослал алерты по задачам на завтра: {n}.")
 
 
+# ------------------------------------------------------------------
+# ГОЛОСОВОЙ ВВОД (#6): голос → Whisper → GPT → черновик задачи
+# ------------------------------------------------------------------
+VOICE_SYSTEM_PROMPT = (
+    "Ты помощник, который из расшифровки голосового сообщения извлекает поля задачи "
+    "для таск-трекера небольшой команды (Лена и Глеб). "
+    "Верни СТРОГО JSON-объект без пояснений с полями: "
+    'title (короткое название), dod (критерий готовности или ""), '
+    'who (одно из: "Лена", "Глеб", "Лена + Глеб"; если не ясно — ""), '
+    'deadline (формат ДД.ММ или ""; относительные даты вычисляй от сегодняшней), '
+    'steps (массив строк), materials (строка или ""), tags (массив слов без #), '
+    "status (одно из: NEW, TODO, WIP, WAITING, REVIEW, DONE, BLOCKED, CANCELLED; по умолчанию TODO)."
+)
+
+
+async def _whisper_transcribe(audio_bytes):
+    """Распознаёт речь через OpenAI Whisper. Возвращает текст."""
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    files = {"file": ("voice.ogg", audio_bytes, "audio/ogg")}
+    data = {"model": WHISPER_MODEL}
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers=headers, files=files, data=data,
+        )
+        r.raise_for_status()
+        return r.json().get("text", "")
+
+
+async def _gpt_parse(transcript):
+    """Раскладывает расшифровку по полям задачи через OpenAI. Возвращает dict."""
+    now = datetime.datetime.now(TZINFO)
+    user = f"Сегодня {now:%d.%m.%Y}. Расшифровка голосового:\n{transcript}"
+    payload = {
+        "model": OPENAI_MODEL,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": VOICE_SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers, json=payload,
+        )
+        r.raise_for_status()
+        content = r.json()["choices"][0]["message"]["content"]
+    return json.loads(content)
+
+
+def _draft_from_parsed(parsed):
+    """Превращает разобранный JSON в данные задачи (как в диалоге /new)."""
+    who = parsed.get("who", "")
+    if who not in ("Лена", "Глеб", "Лена + Глеб"):
+        who = "Лена + Глеб"  # не понял исполнителя — покажем обоим, поправят перед публикацией
+
+    deadline = parse_deadline(str(parsed.get("deadline", ""))) or "Backlog"
+
+    steps_val = parsed.get("steps") or []
+    if isinstance(steps_val, str):
+        steps_val = [steps_val]
+    steps = "\n".join(str(s).strip() for s in steps_val if str(s).strip())
+
+    tags_val = parsed.get("tags") or []
+    if isinstance(tags_val, str):
+        tags_val = re.split(r"[\s,]+", tags_val)
+    tags = " ".join("#" + str(t).lstrip("#") for t in tags_val if str(t).strip())
+
+    status = STATUS_BY_CODE.get(str(parsed.get("status", "TODO")).upper(), "🟡 TODO")
+
+    return {
+        "title": str(parsed.get("title", "")).strip() or "(без названия)",
+        "dod": str(parsed.get("dod", "")).strip(),
+        "who": who,
+        "deadline": deadline,
+        "steps": steps,
+        "materials": str(parsed.get("materials", "")).strip(),
+        "tags": tags,
+        "status": status,
+    }
+
+
+async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Голосовое → распознаём → собираем черновик задачи на подтверждение."""
+    if not OPENAI_API_KEY:
+        return  # фича выключена (нет ключа) — молчим
+    msg = update.message
+    status_msg = await msg.reply_text("🎙️ Слушаю и распознаю…")
+    try:
+        tg_file = await msg.voice.get_file()
+        audio = await tg_file.download_as_bytearray()
+        transcript = await _whisper_transcribe(bytes(audio))
+        if not transcript.strip():
+            await status_msg.edit_text("🤔 Не разобрал речь. Попробуй ещё раз или /new.")
+            return
+        parsed = await _gpt_parse(transcript)
+        data = _draft_from_parsed(parsed)
+    except Exception as e:
+        logger.error("Голос: ошибка обработки: %s", e)
+        await status_msg.edit_text("⚠️ Не получилось обработать голосовое. Заведи через /new.")
+        return
+
+    preview = transcript.strip()
+    if len(preview) > 250:
+        preview = preview[:250] + "…"
+    draft = f"🎙️ Услышал: «{preview}»\n\n— Черновик —\n{build_task_text(data)}\n\nОпубликовать?"
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Опубликовать", callback_data="voice::publish"),
+        InlineKeyboardButton("❌ Отмена", callback_data="voice::cancel"),
+    ]])
+    sent = await status_msg.edit_text(draft, reply_markup=kb)
+    # черновик храним в chat_data под id сообщения (переживёт смену пользователя, но не рестарт)
+    context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
+
+
+async def on_voice_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопки под голосовым черновиком: опубликовать / отмена."""
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split("::", 1)[1]
+    data = context.chat_data.get("voice_drafts", {}).pop(query.message.message_id, None)
+
+    if data is None:
+        await query.edit_message_text("⏳ Черновик устарел. Запиши голосовое заново.")
+        return
+    if action == "cancel":
+        await query.edit_message_text("❌ Отменено.")
+        return
+
+    await query.edit_message_text("⏳ Публикую…")
+    posted, sheet_ok = await publish_task(context.bot, data)
+    confirm = "✅ Задача опубликована." if posted else "⚠️ Не удалось запостить в топик."
+    confirm += "\n📊 Записана в таблицу." if sheet_ok else "\n⚠️ В таблицу не записал (проверь доступ)."
+    await query.edit_message_text(confirm)
+
+
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/id — показать chat_id и id топика. Помогает собрать переменные при настройке."""
     chat = update.effective_chat
@@ -825,7 +983,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/digest — дайджест дедлайнов на сегодня\n"
         "/alerts — алерты по дедлайнам на завтра\n"
         "/id — узнать chat_id и id топика (для настройки)\n"
-        "/cancel — отменить"
+        "/cancel — отменить\n\n"
+        "🎙️ Или пришли голосовое — соберу задачу из него."
     )
 
 
@@ -900,7 +1059,12 @@ def main():
     app.add_handler(CommandHandler("alerts", cmd_alerts))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
+    app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
+    app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(conv)
+
+    if not OPENAI_API_KEY:
+        logger.info("Голосовой ввод выключен (не задан OPENAI_API_KEY).")
 
     # ежедневные задания: дайджест (дедлайн сегодня) и алерты (дедлайн завтра)
     if app.job_queue is not None:
