@@ -24,7 +24,9 @@
 ## Перед деплоем нужно собрать 8 переменных
 
 ### 1. BOT_TOKEN
-Токен твоего бота от @BotFather (тот, что Reminder / @neaizmirsti_bot).
+Токен твоего бота от @BotFather — это **PastilaTaskBot** (`@createtaskpastila_bot`).
+В @BotFather: выбери бота → API Token → Copy. Этот токен идёт только в переменную
+`BOT_TOKEN` на Render, в код и в гит его не кладём.
 
 ### 2-4. GROUP_CHAT_ID, THREAD_LENA, THREAD_GLEB
 
