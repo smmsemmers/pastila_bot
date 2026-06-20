@@ -4,6 +4,7 @@ Pastila OS — Task Bot
 """
 
 import os
+import re
 import asyncio
 import logging
 import datetime
@@ -255,6 +256,24 @@ def replace_status_line(text, new_status):
     return None
 
 
+def parse_deadline(text):
+    """Проверяет дедлайн в формате ДД.ММ (год необязателен и отбрасывается).
+    Допускает разделители . - / и одно-/двузначные числа.
+    Возвращает нормализованную строку «ДД.ММ» или None, если формат неверный."""
+    text = "".join(text.split())  # убираем пробелы
+    m = re.fullmatch(r"(\d{1,2})[.\-/](\d{1,2})(?:[.\-/]\d{2,4})?", text)
+    if not m:
+        return None
+    day, month = int(m.group(1)), int(m.group(2))
+    if not 1 <= month <= 12:
+        return None
+    # максимум дней в месяце (февраль допускаем до 29, год неизвестен)
+    days_in_month = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if not 1 <= day <= days_in_month[month - 1]:
+        return None
+    return f"{day:02d}.{month:02d}"
+
+
 # ------------------------------------------------------------------
 # ДИАЛОГ
 # ------------------------------------------------------------------
@@ -297,7 +316,16 @@ async def get_who_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["deadline"] = update.message.text.strip()
+    deadline = parse_deadline(update.message.text)
+    if deadline is None:
+        # формат не распознан — просим ввести заново (или пропустить)
+        await update.message.reply_text(
+            "🗓️ Не понял дату. Нужен формат ДД.ММ, например 25.07.\n\n"
+            "Попробуй ещё раз или пропусти (уйдёт в Backlog):",
+            reply_markup=skip_keyboard("deadline"),
+        )
+        return DEADLINE
+    context.user_data["deadline"] = deadline
     await update.message.reply_text(
         "📋 Что сделать? Можешь перечислить шаги — каждый с новой строки.\n\n"
         "Напиши текстом или пропусти:",
