@@ -1,0 +1,27 @@
+# Render деплой — фоновый воркер (не web-сервис, у бота нет входящего порта)
+services:
+  - type: worker
+    name: pastila-task-bot
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: GROUP_CHAT_ID
+        sync: false
+      - key: THREAD_LENA
+        sync: false
+      - key: THREAD_GLEB
+        sync: false
+      - key: SHEET_ID
+        sync: false
+      - key: SHEET_NAME
+        value: Sheet1
+      - key: GOOGLE_CREDENTIALS
+        sync: false
+      - key: TAG_LENA
+        value: "@elenaisanewleet"
+      - key: TAG_GLEB
+        value: "@foxruso"
