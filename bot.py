@@ -804,13 +804,13 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/id — показать chat_id и id топика. Помогает собрать переменные при настройке."""
     chat = update.effective_chat
     thread_id = update.message.message_thread_id  # None вне топиков
-    lines = ["🆔 Идентификаторы для настройки:", "", f"GROUP_CHAT_ID = `{chat.id}`"]
+    lines = ["🆔 Идентификаторы для настройки:", "", f"`GROUP_CHAT_ID` = `{chat.id}`"]
     if thread_id is not None:
-        lines.append(f"THREAD этого топика = `{thread_id}`")
+        lines.append(f"id этого топика = `{thread_id}`")
         lines.append("")
-        lines.append("→ впиши его в THREAD_LENA или THREAD_GLEB (смотря чей это топик).")
+        lines.append("→ впиши его в `THREAD_LENA` или `THREAD_GLEB` (смотря чей это топик).")
     else:
-        lines.append("_Это General или личка — id топика нет. Запусти /id внутри нужного топика._")
+        lines.append("Это General или личка — id топика нет. Запусти /id внутри нужного топика.")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
