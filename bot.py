@@ -110,6 +110,28 @@ def read_open_tasks():
     return groups
 
 
+def update_task_status(title, new_status):
+    """Находит строку задачи по названию и обновляет её статус.
+
+    Если задач с таким названием несколько — берём последнюю (самую свежую).
+    Возвращает True, если строка найдена и обновлена, иначе False.
+    Блокирующая функция — вызывать через asyncio.to_thread.
+    """
+    ws = get_worksheet()
+    values = ws.get_all_values()  # первая строка — заголовки
+    target_row = None
+    for idx, row in enumerate(values):
+        if idx == 0:
+            continue  # пропускаем заголовок
+        # колонки: Дата(1) Кто(2) Задача(3) Дедлайн(4) Статус(5) Ссылка(6)
+        if len(row) >= 3 and row[2].strip() == title.strip():
+            target_row = idx + 1  # строки в gspread 1-индексные
+    if target_row is None:
+        return False
+    ws.update_cell(target_row, 5, new_status)  # 5 — колонка «Статус»
+    return True
+
+
 # ------------------------------------------------------------------
 # СОСТОЯНИЯ ДИАЛОГА
 # ------------------------------------------------------------------
@@ -146,17 +168,18 @@ def who_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 
-def status_keyboard():
-    # по две кнопки в ряд, чтобы компактнее
+def status_keyboard(prefix="status"):
+    # по две кнопки в ряд, чтобы компактнее.
+    # prefix задаёт callback_data: "status" — для нового таска, "setstatus" — для смены статуса.
     rows = []
     for i in range(0, len(STATUS_OPTIONS), 2):
         row = [
-            InlineKeyboardButton(STATUS_OPTIONS[i], callback_data=f"status::{STATUS_OPTIONS[i]}")
+            InlineKeyboardButton(STATUS_OPTIONS[i], callback_data=f"{prefix}::{STATUS_OPTIONS[i]}")
         ]
         if i + 1 < len(STATUS_OPTIONS):
             row.append(
                 InlineKeyboardButton(
-                    STATUS_OPTIONS[i + 1], callback_data=f"status::{STATUS_OPTIONS[i + 1]}"
+                    STATUS_OPTIONS[i + 1], callback_data=f"{prefix}::{STATUS_OPTIONS[i + 1]}"
                 )
             )
         rows.append(row)
@@ -195,6 +218,27 @@ def build_task_text(data):
     lines.append("———————————")
     lines.append(f"{data.get('status', '🟡 TODO')}")
     return "\n".join(lines)
+
+
+def extract_task_title(text):
+    """Достаёт название из текста опубликованной задачи (строка «📌 ЗАДАЧА: …»)."""
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("📌 ЗАДАЧА:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def replace_status_line(text, new_status):
+    """Меняет строку статуса в тексте задачи на new_status.
+    Возвращает новый текст или None, если строки статуса там нет."""
+    lines = text.split("\n")
+    statuses = set(STATUS_OPTIONS)
+    for i in range(len(lines) - 1, -1, -1):  # статус — в конце, ищем с конца
+        if lines[i].strip() in statuses:
+            lines[i] = new_status
+            return "\n".join(lines)
+    return None
 
 
 # ------------------------------------------------------------------
@@ -413,12 +457,96 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines).strip())
 
 
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/status в ответ на опубликованную задачу — меняет её статус (в таблице и в самом сообщении)."""
+    msg = update.message
+    replied = msg.reply_to_message
+    text = (replied.text or replied.caption) if replied else None
+    if not text:
+        await msg.reply_text(
+            "Ответь командой /status на сообщение с задачей — тогда поменяю её статус."
+        )
+        return
+    title = extract_task_title(text)
+    if not title:
+        await msg.reply_text("Это сообщение не похоже на задачу (нет строки «📌 ЗАДАЧА: …»).")
+        return
+    # запоминаем, какую задачу и какое сообщение редактируем
+    context.user_data["status_edit"] = {
+        "title": title,
+        "chat_id": replied.chat_id,
+        "message_id": replied.message_id,
+        "orig_text": text,
+    }
+    await msg.reply_text(
+        f"🚦 Новый статус для задачи:\n«{title}»",
+        reply_markup=status_keyboard("setstatus"),
+    )
+
+
+async def on_set_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Нажата кнопка смены статуса — обновляем строку в таблице и текст задачи."""
+    query = update.callback_query
+    await query.answer()
+    new_status = query.data.split("::", 1)[1]
+
+    info = context.user_data.get("status_edit")
+    if not info:
+        await query.edit_message_text(
+            "⏳ Запрос устарел. Ответь на задачу командой /status ещё раз."
+        )
+        return
+
+    # 1) обновляем строку в таблице
+    try:
+        found = await asyncio.to_thread(update_task_status, info["title"], new_status)
+        sheet_result = "ok" if found else "notfound"
+    except Exception as e:
+        logger.error("Ошибка обновления статуса в таблице: %s", e)
+        sheet_result = "error"
+
+    # 2) обновляем само сообщение с задачей (меняем строку статуса)
+    edited = False
+    new_text = replace_status_line(info["orig_text"], new_status)
+    if new_text and new_text != info["orig_text"]:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=info["chat_id"],
+                message_id=info["message_id"],
+                text=new_text,
+            )
+            edited = True
+        except Exception as e:
+            logger.error("Не смог отредактировать сообщение задачи: %s", e)
+
+    # 3) собираем ответ пользователю
+    where = []
+    if edited:
+        where.append("в задаче")
+    if sheet_result == "ok":
+        where.append("в таблице")
+    head = (
+        f"✅ Статус обновлён ({' и '.join(where)}): {new_status}"
+        if where
+        else f"🚦 Статус: {new_status}"
+    )
+    tail = ""
+    if sheet_result == "notfound":
+        tail = "\n⚠️ Строку в таблице не нашёл — этой задачи там нет."
+    elif sheet_result == "error":
+        tail = "\n⚠️ В таблицу записать не вышло (Google недоступен)."
+    await query.edit_message_text(head + tail)
+
+    context.user_data.pop("status_edit", None)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Я бот для задач Pastila OS.\n\n"
         "Команды:\n"
         "/new — создать задачу\n"
         "/list — открытые задачи\n"
+        "/status — сменить статус (в ответ на задачу)\n"
         "/cancel — отменить"
     )
 
@@ -461,6 +589,8 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(conv)
 
     logger.info("Бот запущен.")
