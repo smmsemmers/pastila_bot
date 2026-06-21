@@ -844,7 +844,8 @@ VOICE_SYSTEM_PROMPT = (
     'who (одно из: "Лена", "Глеб", "Лена + Глеб"; если не ясно — ""), '
     'deadline (формат ДД.ММ или ""; относительные даты вычисляй от сегодняшней), '
     'steps (массив строк), materials (строка или ""), tags (массив слов без #), '
-    "status (одно из: NEW, TODO, WIP, WAITING, REVIEW, DONE, BLOCKED, CANCELLED; по умолчанию TODO)."
+    "status (одно из: NEW, TODO, WIP, WAITING, REVIEW, DONE, BLOCKED, CANCELLED; "
+    "если статус в речи не назван явно — верни NEW)."
 )
 
 
@@ -907,7 +908,7 @@ def _draft_from_parsed(parsed):
         tags_val = re.split(r"[\s,]+", tags_val)
     tags = " ".join("#" + str(t).lstrip("#") for t in tags_val if str(t).strip())
 
-    status = STATUS_BY_CODE.get(str(parsed.get("status", "TODO")).upper(), "🟡 TODO")
+    status = STATUS_BY_CODE.get(str(parsed.get("status", "NEW")).upper(), "⚪️ NEW")
 
     return {
         "title": str(parsed.get("title", "")).strip() or "(без названия)",
