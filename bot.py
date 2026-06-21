@@ -1141,6 +1141,73 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
 
 
+def _chunks(text, size=4000):
+    """Режет длинный текст на куски под лимит сообщения Telegram."""
+    return [text[i:i + size] for i in range(0, len(text), size)] or [text]
+
+
+PLAN_SYSTEM_PROMPT = (
+    "Ты — ассистент-планировщик небольшой команды (Лена и Глеб), проект Pastila OS. "
+    "На основе переписки (и доп. контекста, если он есть) составь КОНКРЕТНЫЙ план работы — "
+    "отдельно для Лены и отдельно для Глеба. Для каждого: что сделать и в каком порядке "
+    "(по приоритету), сроки — если упоминались. По пунктам, кратко, без воды. "
+    "Формат:\n\n📋 План для Лены:\n1. …\n2. …\n\n📋 План для Глеба:\n1. …\n2. …\n\n"
+    "Если по человеку задач нет — так и напиши. Обычный текст, без markdown-звёздочек."
+)
+
+
+async def _gpt_plan(transcript, extra=""):
+    """Просит модель составить план работы для Лены и Глеба. Возвращает текст."""
+    now = datetime.datetime.now(TZINFO)
+    parts = [f"Сегодня {now:%d.%m.%Y}."]
+    if extra:
+        parts.append(f"Дополнительный контекст: {extra}")
+    parts.append(f"Переписка (имя: текст):\n{transcript}")
+    payload = {
+        "model": OPENAI_MODEL,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n\n".join(parts)},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/plan — план работы для Лены и Глеба по переписке (+ необязательный текст после команды)."""
+    if not OPENAI_API_KEY:
+        await update.message.reply_text("🔇 Планировщик выключен — не задан OPENAI_API_KEY.")
+        return
+    extra = " ".join(context.args) if context.args else ""
+    buf = _CHAT_LOG.get(update.message.chat_id, [])
+    if len(buf) < 3 and not extra:
+        await update.message.reply_text(
+            "Маловато данных. Я вижу переписку только с момента запуска — пообщайтесь и вызови "
+            "/plan позже, либо добавь контекст после команды, например: "
+            "/plan что нужно успеть к запуску."
+        )
+        return
+    note = await update.message.reply_text("🗂 Составляю план…")
+    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-300:])
+    try:
+        plan = await _gpt_plan(transcript, extra)
+    except Exception as e:
+        logger.error("План: %s", e)
+        await note.edit_text("⚠️ Не получилось составить план. Попробуй позже.")
+        return
+    chunks = _chunks(plan.strip() or "Пусто.")
+    await note.edit_text(chunks[0])
+    for ch in chunks[1:]:
+        await update.message.reply_text(ch)
+
+
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/id — показать chat_id и id топика. Помогает собрать переменные при настройке."""
     chat = update.effective_chat
@@ -1165,6 +1232,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/digest — дайджест дедлайнов на сегодня\n"
         "/alerts — алерты по дедлайнам на завтра\n"
         "/analyze — найти задачи в переписке\n"
+        "/plan — план работы для Лены и Глеба\n"
         "/id — узнать chat_id и id топика (для настройки)\n"
         "/cancel — отменить\n\n"
         "🎙️ Голосовое: наговори задачу — заведу её; или спроси «найди, где Глеб "
@@ -1185,6 +1253,7 @@ async def _set_commands(app):
             BotCommand("digest", "Дедлайны на сегодня"),
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
+            BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Справка"),
         ]
@@ -1244,6 +1313,7 @@ def main():
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("alerts", cmd_alerts))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
