@@ -1035,6 +1035,103 @@ async def on_voice_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(confirm)
 
 
+# ------------------------------------------------------------------
+# АНАЛИЗ ПЕРЕПИСКИ (вариант B): бот копит сообщения и по /analyze предлагает задачи
+# ------------------------------------------------------------------
+_CHAT_LOG = {}   # chat_id -> [(имя, текст), ...] в памяти (сбрасывается при перезапуске бота)
+_LOG_MAX = 500   # сколько последних сообщений держим на чат
+
+
+async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тихо копит текстовые сообщения чата для последующего анализа (/analyze)."""
+    msg = update.message
+    if not msg or not msg.text or msg.text.startswith("/"):
+        return
+    name = msg.from_user.full_name if msg.from_user else "?"
+    buf = _CHAT_LOG.setdefault(msg.chat_id, [])
+    buf.append((name, msg.text))
+    if len(buf) > _LOG_MAX:
+        del buf[: len(buf) - _LOG_MAX]
+
+
+ANALYZE_SYSTEM_PROMPT = (
+    "Ты анализируешь рабочую переписку небольшой команды (Лена и Глеб) по проекту "
+    "Pastila OS. Найди КОНКРЕТНЫЕ задачи, поручения и явные пожелания/приоритеты — "
+    "особенно то, что хочет или просит Глеб. Игнорируй болтовню и обсуждения без действия. "
+    'Верни СТРОГО JSON: {"tasks": [ {title, who, deadline, dod, steps, tags, status}, ... ]}, '
+    'максимум 5 самых конкретных. who — одно из «Лена»/«Глеб»/«Лена + Глеб»/""; '
+    'deadline — ДД.ММ или ""; steps — массив строк; tags — массив слов без #; status всегда NEW. '
+    'Если конкретных задач нет — верни {"tasks": []}.'
+)
+
+
+async def _gpt_analyze(transcript):
+    """Просит модель найти задачи в переписке. Возвращает список dict."""
+    now = datetime.datetime.now(TZINFO)
+    user = f"Сегодня {now:%d.%m.%Y}. Переписка (имя: текст):\n{transcript}"
+    payload = {
+        "model": OPENAI_MODEL,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+        )
+        r.raise_for_status()
+        obj = json.loads(r.json()["choices"][0]["message"]["content"])
+    return obj.get("tasks", []) if isinstance(obj, dict) else []
+
+
+async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/analyze — разобрать накопленную переписку и предложить задачи."""
+    if not OPENAI_API_KEY:
+        await update.message.reply_text("🔇 Анализ выключен — не задан OPENAI_API_KEY.")
+        return
+    buf = _CHAT_LOG.get(update.message.chat_id, [])
+    if len(buf) < 3:
+        await update.message.reply_text(
+            "Пока мало сообщений для анализа. Я вижу переписку только с момента запуска — "
+            "пообщайтесь в чате и вызови /analyze позже."
+        )
+        return
+    note = await update.message.reply_text("🧠 Анализирую переписку…")
+    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-300:])
+    try:
+        tasks = await _gpt_analyze(transcript)
+    except Exception as e:
+        logger.error("Анализ переписки: %s", e)
+        await note.edit_text("⚠️ Не получилось проанализировать. Попробуй позже.")
+        return
+    if not tasks:
+        await note.edit_text("Конкретных задач в переписке не нашёл 🤷")
+        return
+    await note.edit_text(
+        f"Нашёл задач: {len(tasks)}. Ниже черновики — выбери статус, чтобы завести "
+        "(или «Пропустить»):"
+    )
+    for parsed in tasks[:5]:
+        data = _draft_from_parsed(parsed)
+        draft = (
+            f"— Черновик из переписки —\n{build_task_text(data)}\n\n"
+            "🚦 Выбери статус — задача опубликуется:"
+        )
+        rows = [list(r) for r in status_keyboard("voicestatus").inline_keyboard]
+        rows.append([InlineKeyboardButton("❌ Пропустить", callback_data="voice::cancel")])
+        sent = await context.bot.send_message(
+            chat_id=update.message.chat_id,
+            message_thread_id=update.message.message_thread_id,
+            text=draft,
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
+
+
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/id — показать chat_id и id топика. Помогает собрать переменные при настройке."""
     chat = update.effective_chat
@@ -1058,6 +1155,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — сменить статус (в ответ на задачу)\n"
         "/digest — дайджест дедлайнов на сегодня\n"
         "/alerts — алерты по дедлайнам на завтра\n"
+        "/analyze — найти задачи в переписке\n"
         "/id — узнать chat_id и id топика (для настройки)\n"
         "/cancel — отменить\n\n"
         "🎙️ Или пришли голосовое — соберу задачу из него."
@@ -1076,6 +1174,7 @@ async def _set_commands(app):
             BotCommand("status", "Сменить статус (ответом на задачу)"),
             BotCommand("digest", "Дедлайны на сегодня"),
             BotCommand("alerts", "Дедлайны на завтра"),
+            BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Справка"),
         ]
@@ -1134,12 +1233,15 @@ def main():
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("digest", cmd_digest))
     app.add_handler(CommandHandler("alerts", cmd_alerts))
+    app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
     app.add_handler(CallbackQueryHandler(on_voice_status, pattern="^voicestatus::"))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(conv)
+    # фоновый сбор сообщений для /analyze — отдельная группа, чтобы не мешать диалогу
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_log_message), group=1)
 
     if not OPENAI_API_KEY:
         logger.info("Голосовой ввод выключен (не задан OPENAI_API_KEY).")
