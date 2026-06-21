@@ -18,6 +18,7 @@ from google.oauth2.service_account import Credentials
 from telegram import (
     Update,
     BotCommand,
+    ChatMember,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
@@ -25,6 +26,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    ChatMemberHandler,
     MessageHandler,
     ConversationHandler,
     ContextTypes,
@@ -1319,6 +1321,61 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_TEXT, parse_mode="HTML")
 
 
+# Приветствие при добавлении бота в группу: баннер-пастила + короткое описание.
+WELCOME_IMAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "welcome.png")
+WELCOME_CAPTION = (
+    "👋 <b>Привет! Я Pastila OS — бот для задач команды.</b>\n\n"
+    "Помогаю, чтобы поручения не терялись в переписке: каждая задача оформлена, "
+    "видно <b>кто за что отвечает и к какому сроку</b>, а о дедлайнах я напомню сам.\n\n"
+    "<b>⚡ С чего начать</b>\n"
+    "• <code>/new</code> — завести задачу по шагам\n"
+    "• Или просто <b>пришлите голосовое</b> с поручением — оформлю\n"
+    "• <code>/list</code> — открытые задачи\n\n"
+    "<b>📋 Ещё умею</b>\n"
+    "• Напоминаю о дедлайнах — утром и за день до срока\n"
+    "• <code>/analyze</code> — найду задачи в вашей переписке\n"
+    "• <code>/plan</code> — соберу план работы для Лены и Глеба\n\n"
+    "Наберите <code>/help</code> — расскажу подробнее."
+)
+
+
+async def _send_welcome(bot, chat_id, thread_id=None):
+    """Шлёт приветственный баннер с описанием. Если картинки нет — только текст."""
+    try:
+        with open(WELCOME_IMAGE, "rb") as img:
+            await bot.send_photo(
+                chat_id=chat_id, message_thread_id=thread_id,
+                photo=img, caption=WELCOME_CAPTION, parse_mode="HTML",
+            )
+    except FileNotFoundError:
+        await bot.send_message(
+            chat_id=chat_id, message_thread_id=thread_id,
+            text=WELCOME_CAPTION, parse_mode="HTML",
+        )
+
+
+async def on_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Бота добавили в группу — здороваемся баннером с описанием."""
+    cmu = update.my_chat_member
+    if cmu is None:
+        return
+    was_out = cmu.old_chat_member.status in (ChatMember.LEFT, ChatMember.BANNED)
+    now_in = cmu.new_chat_member.status in (
+        ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER
+    )
+    if was_out and now_in and cmu.chat.type in ("group", "supergroup"):
+        logger.info("Добавлен в группу %s (%s) — шлю приветствие", cmu.chat.id, cmu.chat.title)
+        try:
+            await _send_welcome(context.bot, cmu.chat.id)
+        except Exception as e:
+            logger.error("Не смог отправить приветствие: %s", e)
+
+
+async def cmd_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/welcome — показать приветственный баннер (проверить, не переподключая бота)."""
+    await _send_welcome(context.bot, update.effective_chat.id, update.message.message_thread_id)
+
+
 # ------------------------------------------------------------------
 # ЗАПУСК
 # ------------------------------------------------------------------
@@ -1388,7 +1445,10 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("welcome", cmd_welcome))
     app.add_handler(CommandHandler("id", cmd_id))
+    # бота добавили в группу → приветственный баннер
+    app.add_handler(ChatMemberHandler(on_added_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("digest", cmd_digest))
