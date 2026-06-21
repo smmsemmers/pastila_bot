@@ -1294,6 +1294,52 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def cmd_ai_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ai — проверка связи с GPT (OpenAI): ключ, модель, доступ.
+    Помогает понять, почему не работают голос, /analyze и /plan."""
+    if not OPENAI_API_KEY:
+        await update.message.reply_text(
+            "🔇 OPENAI_API_KEY не задан — голос, /analyze и /plan выключены.\n"
+            "Добавь ключ в Render → Environment, чтобы включить."
+        )
+        return
+    note = await update.message.reply_text("🔌 Проверяю связь с GPT…")
+    payload = {
+        "model": OPENAI_MODEL, "max_tokens": 5,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+            )
+    except Exception as e:
+        await note.edit_text(f"⚠️ Не достучался до OpenAI (сеть): {e}")
+        return
+    if r.status_code == 200:
+        await note.edit_text(
+            f"✅ GPT на связи. Модель: {OPENAI_MODEL}.\nГолос, /analyze и /plan работают."
+        )
+        return
+    try:
+        err = r.json().get("error", {}).get("message", "") or r.text[:300]
+    except Exception:
+        err = r.text[:300]
+    hints = {
+        401: "Ключ неверный или с лишними пробелами. Проверь OPENAI_API_KEY (должен начинаться с «sk-»).",
+        429: "Нет квоты/оплаты на аккаунте OpenAI. Зайди на platform.openai.com → Billing и "
+             "добавь способ оплаты или кредиты.",
+        404: f"Модель «{OPENAI_MODEL}» недоступна для этого ключа. Поставь OPENAI_MODEL = gpt-4o-mini.",
+        403: "Доступ запрещён — возможно, модель или регион недоступны для ключа.",
+    }
+    hint = hints.get(r.status_code, "")
+    await note.edit_text(
+        f"❌ GPT недоступен (HTTP {r.status_code}).\n{err}".strip()
+        + (f"\n\n💡 {hint}" if hint else "")
+    )
+
+
 # Приветствие-пояснение: показывается на /start и /help. HTML — для жирных заголовков.
 START_TEXT = (
     "👋 <b>Привет! Я Pastila OS — бот для задач.</b>\n\n"
@@ -1447,9 +1493,10 @@ def help_back_keyboard():
 
 
 def _welcome_keyboard():
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📖 Подробнее — как всё работает", callback_data="welcomeinfo::how")]]
-    )
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧭 Открыть меню", callback_data="menu::open")],
+        [InlineKeyboardButton("📖 Подробнее — как всё работает", callback_data="welcomeinfo::how")],
+    ])
 
 
 async def _send_welcome(bot, chat_id, thread_id=None):
@@ -1704,6 +1751,12 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     parts = query.data.split("::")
     await query.answer()
+    if len(parts) >= 2 and parts[1] == "open":
+        # из приветствия (фото нельзя превратить в текст) — шлём меню отдельным сообщением
+        await query.message.reply_text(
+            MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
+        )
+        return
     if len(parts) >= 2 and parts[1] == "home":
         await query.edit_message_text(
             MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
@@ -1747,6 +1800,7 @@ async def _set_commands(app):
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
+            BotCommand("ai", "Проверить связь с GPT"),
             BotCommand("id", "ID этого чата"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Что умеет бот"),
@@ -1819,6 +1873,7 @@ def main():
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CommandHandler("ai", cmd_ai_check))
     app.add_handler(CallbackQueryHandler(on_menu, pattern="^menu::"))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
