@@ -1324,33 +1324,81 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Приветствие при добавлении бота в группу: баннер-пастила + короткое описание.
 WELCOME_IMAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "welcome.png")
 WELCOME_CAPTION = (
-    "👋 <b>Привет! Я Pastila OS — бот для задач команды.</b>\n\n"
-    "Помогаю, чтобы поручения не терялись в переписке: каждая задача оформлена, "
-    "видно <b>кто за что отвечает и к какому сроку</b>, а о дедлайнах я напомню сам.\n\n"
-    "<b>⚡ С чего начать</b>\n"
-    "• <code>/new</code> — завести задачу по шагам\n"
-    "• Или просто <b>пришлите голосовое</b> с поручением — оформлю\n"
-    "• <code>/list</code> — открытые задачи\n\n"
-    "<b>📋 Ещё умею</b>\n"
-    "• Напоминаю о дедлайнах — утром и за день до срока\n"
-    "• <code>/analyze</code> — найду задачи в вашей переписке\n"
-    "• <code>/plan</code> — соберу план работы для Лены и Глеба\n\n"
-    "Наберите <code>/help</code> — расскажу подробнее."
+    "👋 <b>Привет! Я Pastila OS — бот для задач команды.</b>\n"
+    "Чтобы поручения не терялись: каждая задача оформлена и записана — видно "
+    "<b>кто, что и к какому сроку</b>.\n\n"
+    "<b>📋 Команды</b>\n"
+    "<code>/new</code> — создать задачу (по шагам)\n"
+    "<code>/list</code> — открытые задачи\n"
+    "<code>/status</code> — сменить статус (ответом на задачу)\n"
+    "<code>/digest</code> — дедлайны на сегодня\n"
+    "<code>/alerts</code> — дедлайны на завтра\n"
+    "<code>/analyze</code> — найти задачи в переписке\n"
+    "<code>/plan</code> — план для Лены и Глеба\n"
+    "<code>/id</code> — ID этого чата\n"
+    "<code>/help</code> — что умеет бот\n\n"
+    "🎙️ Или просто <b>пришлите голосовое</b> — оформлю задачу.\n\n"
+    "👇 Нажмите «Подробнее» — расскажу, как всё работает."
+)
+
+# Подробное объяснение (по кнопке «Подробнее») — простым языком, чтобы было понятно всем.
+WELCOME_DETAILS = (
+    "<b>📖 Как всё работает</b>\n\n"
+    "<b>📝 Завести задачу — тремя способами</b>\n"
+    "1. <code>/new</code> — бот по шагам спросит: название, критерий готовности, "
+    "кто (Лена/Глеб/оба), дедлайн, шаги, материалы (можно файл/фото), теги, статус.\n"
+    "2. <b>Голосом</b> — наговорите поручение, бот распознает речь и соберёт черновик; "
+    "останется выбрать статус.\n"
+    "3. <b>Из переписки</b> — <code>/analyze</code> прочитает обсуждение и предложит "
+    "готовые задачи.\n\n"
+    "<b>📌 Что происходит с задачей</b>\n"
+    "• Появляется аккуратная карточка в группе (кто, срок, шаги, теги, статус).\n"
+    "• Под карточкой — кнопки статуса в один тап: В работу · Ждём · Ревью · Блок · Done.\n"
+    "• Та же задача пишется строкой в <b>Google-таблицу</b> (дата, кто, задача, дедлайн, "
+    "статус, ссылка) — это общий реестр.\n\n"
+    "<b>⏰ Напоминания — сам</b>\n"
+    "• Утром — задачи с дедлайном на сегодня.\n"
+    "• За день до срока — алерт с тегом ответственного.\n\n"
+    "<b>🎙️ Голос — два режима</b>\n"
+    "• Поручение → заведу задачу.\n"
+    "• Вопрос «найди, где договаривались про…» → поищу ответ в истории чата и процитирую.\n\n"
+    "<b>🗂 Планирование</b>\n"
+    "<code>/plan</code> — соберу из переписки конкретный план работы отдельно для "
+    "Лены и Глеба.\n\n"
+    "<b>📚 Память о прошлом</b>\n"
+    "Пришлите файл экспорта чата <code>result.json</code> — учту всю прошлую переписку "
+    "в поиске, <code>/analyze</code> и <code>/plan</code>.\n\n"
+    "<b>🔌 Интеграции</b>\n"
+    "• <b>Telegram</b> — задачи в группе, маршрут по темам или по тегам ответственных.\n"
+    "• <b>Google Sheets</b> — авто-реестр всех задач и статусов.\n"
+    "• <b>ИИ (распознавание речи + анализ текста)</b> — голос, поиск по переписке, "
+    "авто-задачи и план.\n\n"
+    "Коротко: пишете или говорите — я оформляю, складываю в таблицу, напоминаю о сроках "
+    "и помогаю планировать. 🍬"
 )
 
 
+def _welcome_keyboard():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📖 Подробнее — как всё работает", callback_data="welcomeinfo::how")]]
+    )
+
+
 async def _send_welcome(bot, chat_id, thread_id=None):
-    """Шлёт приветственный баннер с описанием. Если картинки нет — только текст."""
+    """Шлёт приветственный баннер с описанием команд и кнопкой «Подробнее».
+    Если картинки нет — отправляет только текст (тоже с кнопкой)."""
     try:
         with open(WELCOME_IMAGE, "rb") as img:
             await bot.send_photo(
                 chat_id=chat_id, message_thread_id=thread_id,
                 photo=img, caption=WELCOME_CAPTION, parse_mode="HTML",
+                reply_markup=_welcome_keyboard(),
             )
     except FileNotFoundError:
         await bot.send_message(
             chat_id=chat_id, message_thread_id=thread_id,
             text=WELCOME_CAPTION, parse_mode="HTML",
+            reply_markup=_welcome_keyboard(),
         )
 
 
@@ -1376,6 +1424,13 @@ async def cmd_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_welcome(context.bot, update.effective_chat.id, update.message.message_thread_id)
 
 
+async def on_welcome_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка «Подробнее» под приветствием — присылаем развёрнутое описание возможностей."""
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(WELCOME_DETAILS, parse_mode="HTML")
+
+
 # ------------------------------------------------------------------
 # ЗАПУСК
 # ------------------------------------------------------------------
@@ -1390,6 +1445,7 @@ async def _set_commands(app):
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
+            BotCommand("id", "ID этого чата"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Что умеет бот"),
             BotCommand("help", "Что умеет бот"),
@@ -1449,6 +1505,7 @@ def main():
     app.add_handler(CommandHandler("id", cmd_id))
     # бота добавили в группу → приветственный баннер
     app.add_handler(ChatMemberHandler(on_added_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(CallbackQueryHandler(on_welcome_info, pattern="^welcomeinfo::"))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("digest", cmd_digest))
