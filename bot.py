@@ -372,6 +372,17 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TITLE
 
 
+async def cmd_new_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запуск /new по кнопке «➕ Новая задача» из меню — точка входа в тот же диалог."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.message.reply_text(
+        "🆕 Новая задача.\n\nНапиши короткое название задачи:"
+    )
+    return TITLE
+
+
 async def get_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["title"] = update.message.text.strip()
     await update.message.reply_text(
@@ -1524,6 +1535,8 @@ MENU_TEXT = "🧭 <b>Меню</b>\nВыберите действие:"
 def menu_home_keyboard():
     rows = [[InlineKeyboardButton(label, callback_data=f"menu::act::{key}")]
             for key, label in MENU_ACTIONS]
+    rows.append([InlineKeyboardButton("➕ Новая задача", callback_data="newtask")])
+    rows.append([InlineKeyboardButton("🆔 ID этого чата", callback_data="menu::chatid")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1696,6 +1709,16 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
         )
         return
+    if len(parts) >= 2 and parts[1] == "chatid":
+        chat = query.message.chat
+        thread_id = query.message.message_thread_id
+        lines = ["🆔 <b>ID этого чата</b>", "", f"<code>GROUP_CHAT_ID = {chat.id}</code>"]
+        if thread_id is not None:
+            lines.append(f"id этого топика = <code>{thread_id}</code>")
+        await query.edit_message_text(
+            "\n".join(lines), parse_mode="HTML", reply_markup=_back_to_menu_keyboard()
+        )
+        return
     if len(parts) >= 3 and parts[1] == "act":
         action = parts[2]
         label = dict(MENU_ACTIONS).get(action, "Действие")
@@ -1748,7 +1771,10 @@ def main():
     app = Application.builder().token(BOT_TOKEN).post_init(_set_commands).build()
 
     conv = ConversationHandler(
-        entry_points=[CommandHandler("new", cmd_new)],
+        entry_points=[
+            CommandHandler("new", cmd_new),
+            CallbackQueryHandler(cmd_new_cb, pattern="^newtask$"),
+        ],
         states={
             TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_title)],
             DOD: [
