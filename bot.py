@@ -5,6 +5,7 @@ Pastila OS — Task Bot
 
 import os
 import re
+import html
 import asyncio
 import logging
 import datetime
@@ -1329,6 +1330,7 @@ WELCOME_CAPTION = (
     "<b>кто, что и к какому сроку</b>.\n\n"
     "<b>📋 Команды</b>\n"
     "<code>/new</code> — создать задачу (по шагам)\n"
+    "<code>/menu</code> — меню действий (приоритет · план · статусы)\n"
     "<code>/list</code> — открытые задачи\n"
     "<code>/status</code> — сменить статус (ответом на задачу)\n"
     "<code>/digest</code> — дедлайны на сегодня\n"
@@ -1507,6 +1509,207 @@ async def on_help_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ------------------------------------------------------------------
+# МЕНЮ ДЕЙСТВИЙ (/menu): выбрал действие → выбрал кого → бот ответил
+# ------------------------------------------------------------------
+MENU_ACTIONS = [
+    ("priority", "🎯 Приоритетная задача"),
+    ("plan", "🗂 Напомнить план"),
+    ("status", "📋 Статусы задач"),
+]
+MENU_PERSONS = [("l", "Лена"), ("g", "Глеб"), ("b", "Лена + Глеб")]
+PERSON_BY_CODE = {code: name for code, name in MENU_PERSONS}
+MENU_TEXT = "🧭 <b>Меню</b>\nВыберите действие:"
+
+
+def menu_home_keyboard():
+    rows = [[InlineKeyboardButton(label, callback_data=f"menu::act::{key}")]
+            for key, label in MENU_ACTIONS]
+    return InlineKeyboardMarkup(rows)
+
+
+def menu_person_keyboard(action):
+    rows = [[InlineKeyboardButton(name, callback_data=f"menu::run::{action}::{code}")
+             for code, name in MENU_PERSONS]]
+    rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="menu::home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _back_to_menu_keyboard():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ В меню", callback_data="menu::home")]]
+    )
+
+
+def _person_match(who, person):
+    """Подходит ли исполнитель строки выбранному человеку (Лена + Глеб = все)."""
+    if person == "Лена + Глеб":
+        return True
+    if person == "Лена":
+        return who in ("Лена", "Лена + Глеб")
+    if person == "Глеб":
+        return who in ("Глеб", "Лена + Глеб")
+    return who == person
+
+
+def _deadline_sort_key(deadline):
+    """Срочность дедлайна: меньше — приоритетнее. Backlog/непонятное — в конец."""
+    norm = parse_deadline(deadline or "")
+    if not norm:
+        return 10 ** 6
+    dd, mm = norm.split(".")
+    today = datetime.datetime.now(TZINFO).date()
+    try:
+        d = datetime.date(today.year, int(mm), int(dd))
+    except ValueError:
+        return 10 ** 6
+    delta = (d - today).days
+    if delta < -180:   # дата сильно в прошлом — считаем, что это следующий год
+        delta += 365
+    return delta
+
+
+def _tasks_for(person, groups):
+    """Список (who, task) для человека, отсортированный по срочности дедлайна."""
+    items = [(who, t) for who, tasks in groups.items()
+             if _person_match(who, person) for t in tasks]
+    items.sort(key=lambda it: _deadline_sort_key(it[1]["deadline"]))
+    return items
+
+
+def _format_status_for(person, groups):
+    items = _tasks_for(person, groups)
+    if not items:
+        return f"🎉 У «{person}» открытых задач нет."
+    lines = [f"📋 Открытые задачи — {person}", ""]
+    for who, t in items:
+        title = t["title"] or "(без названия)"
+        extra = f"  ·  👤 {who}" if person == "Лена + Глеб" else ""
+        lines.append(f"{t['status']}  {title}  ·  🗓️ {t['deadline']}{extra}")
+    lines += ["", f"Итого: {len(items)}"]
+    return "\n".join(lines)
+
+
+def _format_priority_for(person, groups):
+    items = _tasks_for(person, groups)
+    if not items:
+        return f"🎉 У «{person}» нет открытых задач — и приоритетов тоже."
+    who, top = items[0]
+    title = html.escape(top["title"] or "(без названия)")
+    lines = [f"🎯 <b>Приоритет — {html.escape(person)}</b>", "",
+             f"{top['status']}  <b>{title}</b>",
+             f"🗓️ Дедлайн: {top['deadline']}"]
+    if person == "Лена + Глеб":
+        lines.append(f"👤 {html.escape(who)}")
+    rest = items[1:3]
+    if rest:
+        lines.append("")
+        lines.append("Следующие на очереди:")
+        for w, t in rest:
+            lines.append(f"• {t['status']}  {html.escape(t['title'])}  ·  🗓️ {t['deadline']}")
+    return "\n".join(lines)
+
+
+async def _gpt_plan_person(person, transcript):
+    """План работы только для одного человека (для кнопки меню)."""
+    now = datetime.datetime.now(TZINFO)
+    sys = (
+        "Ты — ассистент-планировщик небольшой команды (Лена и Глеб), проект Pastila OS. "
+        f"На основе переписки составь КОНКРЕТНЫЙ план работы ТОЛЬКО для: {person}. "
+        "По пунктам, по приоритету (сначала важное), кратко, без воды; сроки — если "
+        f"упоминались. Начни строкой «📋 План для {person}:». Обычный текст, без markdown. "
+        "Если задач для этого человека нет — так и напиши."
+    )
+    user = f"Сегодня {now:%d.%m.%Y}.\nПереписка (имя: текст):\n{transcript}"
+    payload = {
+        "model": OPENAI_MODEL, "temperature": 0.2,
+        "messages": [{"role": "system", "content": sys},
+                     {"role": "user", "content": user}],
+    }
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/menu — панель быстрых действий (приоритет, план, статусы) с выбором человека."""
+    await update.message.reply_text(
+        MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
+    )
+
+
+async def _run_menu_action(query, context, action, person):
+    back = _back_to_menu_keyboard()
+    chat_id = query.message.chat_id
+
+    if action in ("status", "priority"):
+        try:
+            groups = await asyncio.to_thread(read_open_tasks)
+        except Exception as e:
+            logger.error("Меню (%s): чтение таблицы: %s", action, e)
+            await query.edit_message_text(
+                "⚠️ Не получилось прочитать таблицу. Попробуй позже.", reply_markup=back
+            )
+            return
+        if action == "status":
+            await query.edit_message_text(_format_status_for(person, groups), reply_markup=back)
+        else:
+            await query.edit_message_text(
+                _format_priority_for(person, groups), parse_mode="HTML", reply_markup=back
+            )
+        return
+
+    if action == "plan":
+        if not OPENAI_API_KEY:
+            await query.edit_message_text(
+                "🔇 Планировщик выключен — не задан OPENAI_API_KEY.", reply_markup=back
+            )
+            return
+        await query.edit_message_text(f"🗂 Собираю план для «{person}»…")
+        buf = _CHAT_LOG.get(chat_id, [])
+        transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
+        try:
+            plan = (await _gpt_plan(transcript)) if person == "Лена + Глеб" \
+                else (await _gpt_plan_person(person, transcript))
+        except Exception as e:
+            logger.error("Меню/план: %s", e)
+            await query.edit_message_text("⚠️ Не получилось составить план.", reply_markup=back)
+            return
+        for ch in _chunks(plan.strip() or "Пусто."):
+            await query.message.reply_text(ch)
+        # возвращаем меню на место, чтобы можно было сделать ещё действие
+        await query.edit_message_text(
+            MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
+        )
+
+
+async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Навигация по /menu: действие → для кого → результат."""
+    query = update.callback_query
+    parts = query.data.split("::")
+    await query.answer()
+    if len(parts) >= 2 and parts[1] == "home":
+        await query.edit_message_text(
+            MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
+        )
+        return
+    if len(parts) >= 3 and parts[1] == "act":
+        action = parts[2]
+        label = dict(MENU_ACTIONS).get(action, "Действие")
+        await query.edit_message_text(
+            f"{label}\n\nДля кого?", reply_markup=menu_person_keyboard(action)
+        )
+        return
+    if len(parts) >= 4 and parts[1] == "run":
+        action, code = parts[2], parts[3]
+        person = PERSON_BY_CODE.get(code, "Лена + Глеб")
+        await _run_menu_action(query, context, action, person)
+
+
+# ------------------------------------------------------------------
 # ЗАПУСК
 # ------------------------------------------------------------------
 async def _set_commands(app):
@@ -1514,6 +1717,7 @@ async def _set_commands(app):
     await app.bot.set_my_commands(
         [
             BotCommand("new", "Создать задачу"),
+            BotCommand("menu", "Меню действий"),
             BotCommand("list", "Открытые задачи"),
             BotCommand("status", "Сменить статус (ответом на задачу)"),
             BotCommand("digest", "Дедлайны на сегодня"),
@@ -1588,6 +1792,8 @@ def main():
     app.add_handler(CommandHandler("alerts", cmd_alerts))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler("plan", cmd_plan))
+    app.add_handler(CommandHandler("menu", cmd_menu))
+    app.add_handler(CallbackQueryHandler(on_menu, pattern="^menu::"))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
