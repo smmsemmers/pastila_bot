@@ -429,15 +429,23 @@ async def get_materials(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def get_materials_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """На шаге материалов прислали файл/фото — сохраняем ссылку на это сообщение."""
+    """На шаге материалов прислали файл/фото — запоминаем его, чтобы приложить к задаче."""
     msg = update.message
-    link = message_link(msg.chat_id, msg.message_id, msg.message_thread_id)
-    if msg.document and msg.document.file_name:
-        context.user_data["materials"] = f"{msg.document.file_name} — {link}"
+    if msg.document:
+        name = msg.document.file_name or "файл"
+        context.user_data["materials_file"] = {
+            "kind": "document", "file_id": msg.document.file_id, "name": name,
+        }
+        context.user_data["materials"] = f"📎 {name} (приложен ниже)"
+    elif msg.photo:
+        context.user_data["materials_file"] = {
+            "kind": "photo", "file_id": msg.photo[-1].file_id, "name": "фото",
+        }
+        context.user_data["materials"] = "📎 фото (приложено ниже)"
     else:
-        context.user_data["materials"] = link
+        context.user_data["materials"] = "—"
     await msg.reply_text(
-        "📎 Принял файл. 🏷️ Теги (например: #excel #клиент #баг).\n\n"
+        "📎 Принял файл — приложу его к задаче. 🏷️ Теги (например: #excel #клиент #баг).\n\n"
         "Напиши текстом или пропусти:",
         reply_markup=skip_keyboard("tags"),
     )
@@ -512,13 +520,20 @@ async def publish_task(bot, data):
     if tag_line:
         task_text = f"{tag_line}\n{task_text}"
 
-    targets = []
-    if who == "Лена":
-        targets = [THREAD_LENA]
-    elif who == "Глеб":
-        targets = [THREAD_GLEB]
-    elif who == "Лена + Глеб":
-        targets = [THREAD_LENA, THREAD_GLEB]
+    # Куда постить:
+    # — если заданы топики (THREAD_LENA/THREAD_GLEB) — роутим по исполнителю;
+    # — если топиков нет — одна группа без топиков (тег в тексте показывает, на кого задача).
+    if THREAD_LENA or THREAD_GLEB:
+        if who == "Лена":
+            targets = [THREAD_LENA]
+        elif who == "Глеб":
+            targets = [THREAD_GLEB]
+        elif who == "Лена + Глеб":
+            targets = [THREAD_LENA, THREAD_GLEB]
+        else:
+            targets = [None]
+    else:
+        targets = [None]
 
     # постим в группу; запоминаем первое сообщение для ссылки
     first_sent = None
@@ -535,7 +550,24 @@ async def publish_task(bot, data):
                 first_sent = sent
                 first_thread = thread_id
         except Exception as e:
-            logger.error("Ошибка постинга в топик %s: %s", thread_id, e)
+            logger.error("Ошибка постинга (топик %s): %s", thread_id, e)
+
+    # если к задаче приложен файл — кладём его прямо под задачу (в ту же группу/топик)
+    file_info = data.get("materials_file")
+    if file_info and first_sent is not None:
+        try:
+            if file_info.get("kind") == "photo":
+                await bot.send_photo(
+                    chat_id=GROUP_CHAT_ID, message_thread_id=first_thread,
+                    photo=file_info["file_id"], caption="📎 Материал к задаче",
+                )
+            else:
+                await bot.send_document(
+                    chat_id=GROUP_CHAT_ID, message_thread_id=first_thread,
+                    document=file_info["file_id"], caption="📎 Материал к задаче",
+                )
+        except Exception as e:
+            logger.error("Не смог приложить файл к задаче: %s", e)
 
     link = ""
     if first_sent is not None:
