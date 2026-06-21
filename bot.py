@@ -945,12 +945,14 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     preview = transcript.strip()
     if len(preview) > 250:
         preview = preview[:250] + "…"
-    draft = f"🎙️ Услышал: «{preview}»\n\n— Черновик —\n{build_task_text(data)}\n\nОпубликовать?"
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Опубликовать", callback_data="voice::publish"),
-        InlineKeyboardButton("❌ Отмена", callback_data="voice::cancel"),
-    ]])
-    sent = await status_msg.edit_text(draft, reply_markup=kb)
+    draft = (
+        f"🎙️ Услышал: «{preview}»\n\n— Черновик —\n{build_task_text(data)}\n\n"
+        "🚦 Выбери статус — и задача опубликуется:"
+    )
+    # выбор статуса в конце (как в /new) + отмена
+    rows = [list(row) for row in status_keyboard("voicestatus").inline_keyboard]
+    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="voice::cancel")])
+    sent = await status_msg.edit_text(draft, reply_markup=InlineKeyboardMarkup(rows))
     # черновик храним в chat_data под id сообщения (переживёт смену пользователя, но не рестарт)
     context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
 
@@ -970,6 +972,23 @@ async def on_voice_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await query.edit_message_text("⏳ Публикую…")
+    posted, sheet_ok = await publish_task(context.bot, data)
+    confirm = "✅ Задача опубликована." if posted else "⚠️ Не удалось запостить в топик."
+    confirm += "\n📊 Записана в таблицу." if sheet_ok else "\n⚠️ В таблицу не записал (проверь доступ)."
+    await query.edit_message_text(confirm)
+
+
+async def on_voice_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Под голосовым черновиком выбран статус — публикуем задачу с ним."""
+    query = update.callback_query
+    await query.answer()
+    status = query.data.split("::", 1)[1]
+    data = context.chat_data.get("voice_drafts", {}).pop(query.message.message_id, None)
+    if data is None:
+        await query.edit_message_text("⏳ Черновик устарел. Запиши голосовое заново.")
+        return
+    data["status"] = status
+    await query.edit_message_text(f"🚦 Статус: {status}\n⏳ Публикую…")
     posted, sheet_ok = await publish_task(context.bot, data)
     confirm = "✅ Задача опубликована." if posted else "⚠️ Не удалось запостить в топик."
     confirm += "\n📊 Записана в таблицу." if sheet_ok else "\n⚠️ В таблицу не записал (проверь доступ)."
@@ -1078,6 +1097,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
+    app.add_handler(CallbackQueryHandler(on_voice_status, pattern="^voicestatus::"))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(conv)
 
