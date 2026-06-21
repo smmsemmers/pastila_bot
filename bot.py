@@ -227,7 +227,13 @@ STATUS_OPTIONS = [
 ]
 
 # Быстрые статусы для кнопок прямо под задачей (#8): код → подпись на кнопке
-QUICK_STATUS = [("WIP", "🔵 В работу"), ("REVIEW", "🟣 Ревью"), ("DONE", "✅ Done")]
+QUICK_STATUS = [
+    ("WIP", "🔵 В работу"),
+    ("WAITING", "🟠 Ждём"),
+    ("REVIEW", "🟣 Ревью"),
+    ("BLOCKED", "🔴 Блок"),
+    ("DONE", "✅ Done"),
+]
 # код → каноничный статус из STATUS_OPTIONS (например "DONE" → "🟢 DONE")
 STATUS_BY_CODE = {opt.split(" ", 1)[1]: opt for opt in STATUS_OPTIONS}
 
@@ -270,7 +276,9 @@ def quick_status_keyboard():
         InlineKeyboardButton(label, callback_data=f"quick::{code}")
         for code, label in QUICK_STATUS
     ]
-    return InlineKeyboardMarkup([buttons])
+    # по 3 в ряд, чтобы не было тесно
+    rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+    return InlineKeyboardMarkup(rows)
 
 
 # ------------------------------------------------------------------
