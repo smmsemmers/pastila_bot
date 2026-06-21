@@ -876,16 +876,17 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------------
 # ГОЛОСОВОЙ ВВОД (#6): голос → Whisper → GPT → черновик задачи
 # ------------------------------------------------------------------
-VOICE_SYSTEM_PROMPT = (
-    "Ты помощник, который из расшифровки голосового сообщения извлекает поля задачи "
-    "для таск-трекера небольшой команды (Лена и Глеб). "
-    "Верни СТРОГО JSON-объект без пояснений с полями: "
-    'title (короткое название), dod (критерий готовности или ""), '
-    'who (одно из: "Лена", "Глеб", "Лена + Глеб"; если не ясно — ""), '
-    'deadline (формат ДД.ММ или ""; относительные даты вычисляй от сегодняшней), '
-    'steps (массив строк), materials (строка или ""), tags (массив слов без #), '
-    "status (одно из: NEW, TODO, WIP, WAITING, REVIEW, DONE, BLOCKED, CANCELLED; "
-    "если статус в речи не назван явно — верни NEW)."
+VOICE_ROUTER_PROMPT = (
+    "Тебе дают расшифровку голосового сообщения и недавнюю переписку команды (Лена, Глеб). "
+    "Определи намерение и верни СТРОГО JSON.\n"
+    "• Если голосовое — это просьба ЗАВЕСТИ/СОЗДАТЬ задачу, поручение, напоминание что-то сделать — "
+    'верни {"type":"task","title":...,"dod":"","who":"","deadline":"","steps":[],"materials":"","tags":[],"status":"NEW"} '
+    "и заполни поля ТОЛЬКО из голосового (переписку для задачи игнорируй). "
+    'who — «Лена»/«Глеб»/«Лена + Глеб»/""; deadline — ДД.ММ или "" (относительные даты считай от сегодня); '
+    "tags — слова без #; status — NEW, если в речи статус не назван.\n"
+    "• Если голосовое — это ВОПРОС или ПОИСК по переписке («найди где…», «что Глеб говорил про…», "
+    "«когда…», «покажи…») — найди ответ В ПЕРЕПИСКЕ и верни "
+    '{"type":"answer","text":"<краткий ответ с цитатами и кто что сказал; если в переписке нет — честно скажи>"}.'
 )
 
 
@@ -903,16 +904,18 @@ async def _whisper_transcribe(audio_bytes):
         return r.json().get("text", "")
 
 
-async def _gpt_parse(transcript):
-    """Раскладывает расшифровку по полям задачи через OpenAI. Возвращает dict."""
+async def _gpt_voice_route(transcript, chat_log):
+    """По голосовому решает: завести задачу или ответить на вопрос по переписке.
+    Возвращает dict с ключом type: "task" (+поля задачи) или "answer" (+text)."""
     now = datetime.datetime.now(TZINFO)
-    user = f"Сегодня {now:%d.%m.%Y}. Расшифровка голосового:\n{transcript}"
+    log_text = "\n".join(f"{n}: {t}" for n, t in chat_log[-200:]) or "(переписки пока нет)"
+    user = f"Сегодня {now:%d.%m.%Y}.\n\nГолосовое: {transcript}\n\nПереписка (имя: текст):\n{log_text}"
     payload = {
         "model": OPENAI_MODEL,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [
-            {"role": "system", "content": VOICE_SYSTEM_PROMPT},
+            {"role": "system", "content": VOICE_ROUTER_PROMPT},
             {"role": "user", "content": user},
         ],
     }
@@ -975,8 +978,14 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not transcript.strip():
             await status_msg.edit_text("🤔 Не разобрал речь. Попробуй ещё раз или /new.")
             return
-        parsed = await _gpt_parse(transcript)
-        data = _draft_from_parsed(parsed)
+        chat_log = _CHAT_LOG.get(msg.chat_id, [])
+        result = await _gpt_voice_route(transcript, chat_log)
+        # это вопрос/поиск по переписке — отвечаем, задачу не заводим
+        if result.get("type") == "answer":
+            answer = (result.get("text") or "").strip() or "В переписке ничего не нашёл."
+            await status_msg.edit_text(f"🔎 {answer}")
+            return
+        data = _draft_from_parsed(result)
     except Exception as e:
         logger.error("Голос: ошибка обработки: %s", e)
         await status_msg.edit_text("⚠️ Не получилось обработать голосовое. Заведи через /new.")
@@ -1158,7 +1167,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/analyze — найти задачи в переписке\n"
         "/id — узнать chat_id и id топика (для настройки)\n"
         "/cancel — отменить\n\n"
-        "🎙️ Или пришли голосовое — соберу задачу из него."
+        "🎙️ Голосовое: наговори задачу — заведу её; или спроси «найди, где Глеб "
+        "говорил про сроки» — поищу ответ в переписке."
     )
 
 
