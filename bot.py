@@ -1280,23 +1280,43 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+# Приветствие-пояснение: показывается на /start и /help. HTML — для жирных заголовков.
+START_TEXT = (
+    "👋 <b>Привет! Я Pastila OS — бот для задач.</b>\n\n"
+    "Помогаю вести задачи команды прямо в Telegram: чтобы поручения не терялись "
+    "в переписке, было видно <b>кто что делает и к какому сроку</b>, а дедлайны "
+    "не забывались.\n\n"
+    "<b>🎯 Какие задачи решаю</b>\n"
+    "• Поручения не теряются — каждая задача оформлена и записана в таблицу.\n"
+    "• Видно, кто за что отвечает и какой статус у дела.\n"
+    "• Сам напоминаю о дедлайнах — утром и за день до срока.\n"
+    "• Не хочешь печатать — <b>наговори голосом</b>, я оформлю задачу.\n"
+    "• Разберу переписку и предложу из неё задачи и план работы.\n\n"
+    "<b>⚡ С чего начать</b>\n"
+    "• <code>/new</code> — завести задачу по шагам\n"
+    "• Или просто <b>пришли голосовое</b> с поручением\n"
+    "• <code>/list</code> — посмотреть открытые задачи\n\n"
+    "<b>📋 Команды</b>\n"
+    "<code>/new</code> — создать задачу\n"
+    "<code>/list</code> — открытые задачи\n"
+    "<code>/status</code> — сменить статус (ответом на задачу)\n"
+    "<code>/digest</code> — дедлайны на сегодня\n"
+    "<code>/alerts</code> — дедлайны на завтра\n"
+    "<code>/analyze</code> — найти задачи в переписке\n"
+    "<code>/plan</code> — план работы для Лены и Глеба\n"
+    "<code>/id</code> — chat_id и id топика (для настройки)\n"
+    "<code>/cancel</code> — отменить создание\n\n"
+    "<b>🎙️ Голос</b>\n"
+    "Наговори задачу — заведу. Или спроси «найди, где Глеб говорил про сроки» — "
+    "поищу ответ в переписке.\n\n"
+    "<b>📚 История</b>\n"
+    "Пришли файл <code>result.json</code> (экспорт чата) — учту всю прошлую "
+    "переписку в <code>/plan</code> и <code>/analyze</code>."
+)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Я бот для задач Pastila OS.\n\n"
-        "Команды:\n"
-        "/new — создать задачу\n"
-        "/list — открытые задачи\n"
-        "/status — сменить статус (в ответ на задачу)\n"
-        "/digest — дайджест дедлайнов на сегодня\n"
-        "/alerts — алерты по дедлайнам на завтра\n"
-        "/analyze — найти задачи в переписке\n"
-        "/plan — план работы для Лены и Глеба\n"
-        "/id — узнать chat_id и id топика (для настройки)\n"
-        "/cancel — отменить\n\n"
-        "🎙️ Голосовое: наговори задачу — заведу её; или спроси «найди, где Глеб "
-        "говорил про сроки» — поищу ответ в переписке.\n"
-        "📚 Пришли файл result.json (экспорт чата) — загружу всю историю для /plan и /analyze."
-    )
+    await update.message.reply_text(START_TEXT, parse_mode="HTML")
 
 
 # ------------------------------------------------------------------
@@ -1314,7 +1334,8 @@ async def _set_commands(app):
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("cancel", "Отменить создание задачи"),
-            BotCommand("start", "Справка"),
+            BotCommand("start", "Что умеет бот"),
+            BotCommand("help", "Что умеет бот"),
         ]
     )
 
@@ -1366,6 +1387,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("status", cmd_status))
