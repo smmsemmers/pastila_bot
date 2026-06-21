@@ -1048,7 +1048,7 @@ async def on_voice_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # АНАЛИЗ ПЕРЕПИСКИ (вариант B): бот копит сообщения и по /analyze предлагает задачи
 # ------------------------------------------------------------------
 _CHAT_LOG = {}   # chat_id -> [(имя, текст), ...] в памяти (сбрасывается при перезапуске бота)
-_LOG_MAX = 500   # сколько последних сообщений держим на чат
+_LOG_MAX = 2000  # сколько последних сообщений держим на чат (с запасом под импорт истории)
 
 
 async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1110,7 +1110,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     note = await update.message.reply_text("🧠 Анализирую переписку…")
-    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-300:])
+    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
     try:
         tasks = await _gpt_analyze(transcript)
     except Exception as e:
@@ -1195,7 +1195,7 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     note = await update.message.reply_text("🗂 Составляю план…")
-    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-300:])
+    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
     try:
         plan = await _gpt_plan(transcript, extra)
     except Exception as e:
@@ -1206,6 +1206,64 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await note.edit_text(chunks[0])
     for ch in chunks[1:]:
         await update.message.reply_text(ch)
+
+
+def _flatten_text(t):
+    """Текст сообщения в экспорте бывает строкой или списком кусков — склеиваем в строку."""
+    if isinstance(t, str):
+        return t
+    if isinstance(t, list):
+        out = []
+        for p in t:
+            if isinstance(p, str):
+                out.append(p)
+            elif isinstance(p, dict):
+                out.append(p.get("text", ""))
+        return "".join(out)
+    return ""
+
+
+def _parse_export(data):
+    """Парсит result.json экспорта Telegram → [(имя, текст), ...]."""
+    msgs = data.get("messages", []) if isinstance(data, dict) else []
+    out = []
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("type") != "message":
+            continue  # пропускаем сервисные сообщения
+        text = _flatten_text(m.get("text", "")).strip()
+        if text:
+            out.append((str(m.get("from") or "?"), text))
+    return out
+
+
+async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Прислали result.json (экспорт чата) — грузим историю в память для /plan, /analyze, поиска."""
+    msg = update.message
+    doc = msg.document
+    if not doc or not (doc.file_name or "").lower().endswith(".json"):
+        return
+    note = await msg.reply_text("📥 Загружаю историю чата…")
+    try:
+        tg_file = await doc.get_file()
+        raw = await tg_file.download_as_bytearray()
+        data = json.loads(bytes(raw).decode("utf-8", "ignore"))
+        imported = _parse_export(data)
+    except Exception as e:
+        logger.error("Импорт истории: %s", e)
+        await note.edit_text(
+            "⚠️ Не смог прочитать файл. Нужен result.json из экспорта Telegram "
+            "(Export chat history → формат Machine-readable JSON)."
+        )
+        return
+    if not imported:
+        await note.edit_text("В файле не нашёл сообщений. Проверь, что экспорт в формате JSON.")
+        return
+    existing = _CHAT_LOG.get(msg.chat_id, [])
+    _CHAT_LOG[msg.chat_id] = (imported + existing)[-_LOG_MAX:]
+    await note.edit_text(
+        f"📚 Загрузил историю: {len(imported)} сообщений. Теперь /plan, /analyze и голосовой "
+        "поиск учитывают её.\n(Хранится в памяти до перезапуска бота.)"
+    )
 
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1236,7 +1294,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/id — узнать chat_id и id топика (для настройки)\n"
         "/cancel — отменить\n\n"
         "🎙️ Голосовое: наговори задачу — заведу её; или спроси «найди, где Глеб "
-        "говорил про сроки» — поищу ответ в переписке."
+        "говорил про сроки» — поищу ответ в переписке.\n"
+        "📚 Пришли файл result.json (экспорт чата) — загружу всю историю для /plan и /analyze."
     )
 
 
@@ -1320,6 +1379,8 @@ def main():
     app.add_handler(CallbackQueryHandler(on_voice_status, pattern="^voicestatus::"))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(conv)
+    # импорт истории: result.json экспорта Telegram (вне диалога /new)
+    app.add_handler(MessageHandler(filters.Document.FileExtension("json"), on_history_import))
     # фоновый сбор сообщений для /analyze — отдельная группа, чтобы не мешать диалогу
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_log_message), group=1)
 
