@@ -60,3 +60,13 @@ services:
         value: "truncate"
       - key: SQUEEZE_MODEL
         value: "sonnet46"
+      # ── База знаний: файлы + Notion ──
+      # VISION_MODEL — модель для описания картинок/схем (default: haiku45 — дёшево)
+      - key: VISION_MODEL
+        value: "haiku45"
+      # NOTION_TOKEN — Internal Integration Secret с notion.so/my-integrations
+      - key: NOTION_TOKEN
+        sync: false
+      # NOTION_PAGES — page_id через запятую; пусто = все страницы интеграции
+      - key: NOTION_PAGES
+        value: ""

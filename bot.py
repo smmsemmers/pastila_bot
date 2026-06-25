@@ -12,9 +12,31 @@ import datetime
 import json
 from zoneinfo import ZoneInfo
 
+import base64
+import io
+import hashlib
+
 import httpx
 import llm_router as llm
 import gspread
+
+try:
+    import pdfplumber
+    _PDF_OK = True
+except ImportError:
+    _PDF_OK = False
+
+try:
+    from docx import Document as DocxDocument
+    _DOCX_OK = True
+except ImportError:
+    _DOCX_OK = False
+
+try:
+    from notion_client import AsyncClient as NotionClient
+    _NOTION_SDK_OK = True
+except ImportError:
+    _NOTION_SDK_OK = False
 from google.oauth2.service_account import Credentials
 
 from telegram import (
@@ -90,6 +112,12 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "whisper-1")
 
+# Notion: NOTION_TOKEN — ключ интеграции (Internal Integration Secret)
+# NOTION_PAGES — page_id через запятую; если пусто — sync берёт все accessible pages
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
+NOTION_PAGES = [p.strip() for p in os.environ.get("NOTION_PAGES", "").split(",") if p.strip()]
+VISION_MODEL_KEY = os.environ.get("VISION_MODEL", "haiku45")  # модель для описания картинок
+
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
 # ------------------------------------------------------------------
@@ -141,6 +169,87 @@ def _save_llm_state():
             "A1", json.dumps(llm.export_state(), ensure_ascii=False))
     except Exception as e:
         logger.warning("Не удалось сохранить состояние LLM: %s", e)
+
+
+_KB_TAB = "_knowledge"
+_KB_HEADERS = ["source", "item_id", "title", "content", "added_at"]
+
+
+def _knowledge_ws():
+    """Возвращает вкладку _knowledge, создаёт если нет."""
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS", "")
+    if not creds_json or not SHEET_ID:
+        return None
+    try:
+        creds = Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        sh = gspread.authorize(creds).open_by_key(SHEET_ID)
+        try:
+            ws = sh.worksheet(_KB_TAB)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(_KB_TAB, rows=1000, cols=len(_KB_HEADERS))
+            ws.append_row(_KB_HEADERS, value_input_option="USER_ENTERED")
+        return ws
+    except Exception as e:
+        logger.error("_knowledge_ws: %s", e)
+        return None
+
+
+def _load_knowledge():
+    """Загружает базу знаний из Sheet в память при старте."""
+    global _KNOWLEDGE, _KNOWLEDGE_IDS
+    ws = _knowledge_ws()
+    if not ws:
+        return
+    try:
+        rows = ws.get_all_records()
+        _KNOWLEDGE = [{k: str(v) for k, v in r.items()} for r in rows if r.get("item_id")]
+        _KNOWLEDGE_IDS = {r["item_id"] for r in _KNOWLEDGE}
+        logger.info("База знаний загружена: %d элементов", len(_KNOWLEDGE))
+    except Exception as e:
+        logger.error("_load_knowledge: %s", e)
+
+
+def _add_knowledge_item(source: str, item_id: str, title: str, content: str):
+    """Добавляет элемент в память и в Sheet (если ещё не было)."""
+    if item_id in _KNOWLEDGE_IDS:
+        return False
+    now = datetime.datetime.now(TZINFO).strftime("%Y-%m-%d %H:%M")
+    item = {"source": source, "item_id": item_id, "title": title,
+            "content": content, "added_at": now}
+    _KNOWLEDGE.append(item)
+    _KNOWLEDGE_IDS.add(item_id)
+    try:
+        ws = _knowledge_ws()
+        if ws:
+            ws.append_row([source, item_id, title, content, now],
+                          value_input_option="USER_ENTERED")
+    except Exception as e:
+        logger.error("_add_knowledge_item (sheet): %s", e)
+    return True
+
+
+def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000) -> str:
+    """Форматирует базу знаний для вставки в промпт LLM."""
+    if not _KNOWLEDGE:
+        return ""
+    parts = []
+    total = 0
+    for item in _KNOWLEDGE:
+        snippet = item["content"][:max_chars_per_item].strip()
+        if len(item["content"]) > max_chars_per_item:
+            snippet += "…"
+        label = f"[{item['source'].upper()}: {item['title']}]"
+        block = f"{label}\n{snippet}"
+        if total + len(block) > max_total:
+            break
+        parts.append(block)
+        total += len(block)
+    if not parts:
+        return ""
+    return "\n\n=== БАЗА ЗНАНИЙ КОМАНДЫ ===\n" + "\n\n".join(parts) + "\n=== КОНЕЦ БЗ ==="
 
 
 def append_task_to_sheet(date_str, who, task_title, deadline, status, link=""):
@@ -1017,9 +1126,11 @@ async def _gpt_voice_analyze(clean_text, chat_log, chat_id):
     now = datetime.datetime.now(TZINFO)
     log_text = await llm.prepare_context(chat_log, chat_id, task="voice_route")
     model_id = llm.model_id_for(chat_id, "voice_route", log_text + " " + clean_text)
+    kb = _kb_context()
     user = (f"Сегодня {now:%d.%m.%Y}.\n\n"
             f"Запрос: {clean_text}\n\n"
-            f"Переписка команды (имя: текст):\n{log_text}")
+            f"Переписка команды (имя: текст):\n{log_text}"
+            + (f"\n\n{kb}" if kb else ""))
     return await llm.call_llm(
         [{"role": "system", "content": VOICE_ANALYSIS_PROMPT},
          {"role": "user", "content": user}],
@@ -1271,6 +1382,10 @@ async def on_voice_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _CHAT_LOG = {}   # chat_id -> [(имя, текст), ...] в памяти (сбрасывается при перезапуске бота)
 _LOG_MAX = 2000  # сколько последних сообщений держим на чат (с запасом под импорт истории)
 
+# База знаний — файлы и страницы Notion. Хранится в Sheet «_knowledge» и грузится при старте.
+_KNOWLEDGE: list[dict] = []      # [{source, item_id, title, content, added_at}, ...]
+_KNOWLEDGE_IDS: set[str] = set() # для дедупликации по item_id
+
 
 async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тихо копит текстовые сообщения чата для последующего анализа (/analyze)."""
@@ -1282,6 +1397,163 @@ async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buf.append((name, msg.text))
     if len(buf) > _LOG_MAX:
         del buf[: len(buf) - _LOG_MAX]
+
+
+# ------------------------------------------------------------------
+# БАЗА ЗНАНИЙ — извлечение контента из файлов
+# ------------------------------------------------------------------
+
+def _extract_pdf(data: bytes) -> str:
+    if not _PDF_OK:
+        return ""
+    try:
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            pages = [p.extract_text() or "" for p in pdf.pages]
+        return "\n".join(p for p in pages if p.strip())[:6000]
+    except Exception as e:
+        logger.error("PDF extract: %s", e)
+        return ""
+
+
+def _extract_docx(data: bytes) -> str:
+    if not _DOCX_OK:
+        return ""
+    try:
+        doc = DocxDocument(io.BytesIO(data))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:6000]
+    except Exception as e:
+        logger.error("DOCX extract: %s", e)
+        return ""
+
+
+async def _vision_describe(image_bytes: bytes, filename: str = "") -> str:
+    """Описывает изображение через vision-модель (OpenRouter)."""
+    if not llm.OPENROUTER_API_KEY:
+        return ""
+    try:
+        b64 = base64.b64encode(image_bytes).decode()
+        note = f" ({filename})" if filename else ""
+        messages = [
+            {"role": "system", "content": (
+                "Ты помощник команды Pastila OS (пастила-бизнес). "
+                "Подробно опиши, что видишь на изображении. "
+                "Если это схема, диаграмма, макет или документ — разбери структуру и ключевые данные. "
+                "Если это фото продукта или места — опиши предметно. Отвечай по-русски."
+            )},
+            {"role": "user", "content": [
+                {"type": "text", "text": f"Опиши это изображение{note}:"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ]},
+        ]
+        return await llm.call_llm(messages, VISION_MODEL_KEY, temperature=0.2, max_tokens=600)
+    except Exception as e:
+        logger.error("vision_describe: %s", e)
+        return ""
+
+
+async def _download_tg_file(bot, file_id: str) -> bytes:
+    tg_file = await bot.get_file(file_id)
+    buf = io.BytesIO()
+    await tg_file.download_to_memory(buf)
+    return buf.getvalue()
+
+
+async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Авто-обработка файлов/фото в группе → извлечение текста → база знаний."""
+    if not llm.OPENROUTER_API_KEY and not _PDF_OK and not _DOCX_OK:
+        return
+    msg = update.message
+    if not msg:
+        return
+
+    # Определяем что пришло
+    doc = msg.document
+    photo = msg.photo[-1] if msg.photo else None
+
+    if not doc and not photo:
+        return
+
+    # Имя, mime, file_id
+    if doc:
+        file_id = doc.file_id
+        filename = doc.file_name or ""
+        mime = (doc.mime_type or "").lower()
+        size = doc.file_size or 0
+    else:
+        file_id = photo.file_id
+        filename = "photo.jpg"
+        mime = "image/jpeg"
+        size = photo.file_size or 0
+
+    # Пропускаем > 20 МБ (Telegram limit) и уже виденные
+    if size > 20 * 1024 * 1024:
+        return
+    item_id = file_id  # Telegram file_id стабилен для одного файла
+    if item_id in _KNOWLEDGE_IDS:
+        return
+
+    title = filename or "photo"
+    status_msg = await msg.reply_text(f"📎 Читаю «{title}»…")
+
+    try:
+        data = await _download_tg_file(context.bot, file_id)
+        content = ""
+
+        if mime == "application/pdf" or filename.lower().endswith(".pdf"):
+            content = await asyncio.to_thread(_extract_pdf, data)
+            label = "PDF"
+
+        elif mime in ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",) \
+                or filename.lower().endswith(".docx"):
+            content = await asyncio.to_thread(_extract_docx, data)
+            label = "DOCX"
+
+        elif mime.startswith("image/") or filename.lower().endswith(
+                (".jpg", ".jpeg", ".png", ".webp", ".gif")):
+            content = await _vision_describe(data, filename)
+            label = "Изображение"
+
+        elif mime.startswith("audio/") or mime == "video/ogg" \
+                or filename.lower().endswith((".ogg", ".mp3", ".wav", ".m4a")):
+            if OPENAI_API_KEY:
+                content = await _whisper_transcribe(data)
+                label = "Аудио"
+            else:
+                await status_msg.edit_text("🔇 Аудио: нет OPENAI_API_KEY для расшифровки.")
+                return
+
+        elif mime in (
+            "text/plain", "text/csv", "application/json",
+            "application/xml", "text/markdown",
+        ) or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
+            content = data.decode("utf-8", errors="replace")[:6000]
+            label = "Текст"
+
+        else:
+            await status_msg.edit_text(
+                f"📎 «{title}» — тип {mime or 'неизвестен'}, не знаю как читать."
+            )
+            return
+
+        if not content or not content.strip():
+            await status_msg.edit_text(f"📎 «{title}» — не смог извлечь текст.")
+            return
+
+        added = await asyncio.to_thread(
+            _add_knowledge_item, f"telegram_{label}", item_id, title, content
+        )
+        if added:
+            snippet = content[:200].replace("\n", " ")
+            await status_msg.edit_text(
+                f"✅ {label} «{title}» добавлен в базу знаний.\n"
+                f"_{snippet}{'…' if len(content) > 200 else ''}_"
+            )
+        else:
+            await status_msg.edit_text(f"📎 «{title}» уже в базе знаний.")
+
+    except Exception as e:
+        logger.error("on_file: %s", e)
+        await status_msg.edit_text(f"⚠️ Не смог обработать «{title}»: {e}")
 
 
 ANALYZE_SYSTEM_PROMPT = (
@@ -1298,7 +1570,9 @@ ANALYZE_SYSTEM_PROMPT = (
 async def _gpt_analyze(transcript, model_id):
     """Просит модель найти задачи в переписке. Возвращает список dict."""
     now = datetime.datetime.now(TZINFO)
-    user = f"Сегодня {now:%d.%m.%Y}. Переписка (имя: текст):\n{transcript}"
+    kb = _kb_context(max_chars_per_item=400, max_total=3000)
+    user = (f"Сегодня {now:%d.%m.%Y}. Переписка (имя: текст):\n{transcript}"
+            + (f"\n\n{kb}" if kb else ""))
     content = await llm.call_llm(
         [{"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
          {"role": "user", "content": user}],
@@ -1380,10 +1654,13 @@ PLAN_SYSTEM_PROMPT = (
 async def _gpt_plan(transcript, extra, model_id):
     """Просит модель составить план работы для Лены и Глеба. Возвращает текст."""
     now = datetime.datetime.now(TZINFO)
+    kb = _kb_context(max_chars_per_item=500, max_total=4000)
     parts = [f"Сегодня {now:%d.%m.%Y}."]
     if extra:
         parts.append(f"Дополнительный контекст: {extra}")
     parts.append(f"Переписка (имя: текст):\n{transcript}")
+    if kb:
+        parts.append(kb)
     return await llm.call_llm(
         [{"role": "system", "content": PLAN_SYSTEM_PROMPT},
          {"role": "user", "content": "\n\n".join(parts)}],
@@ -1426,6 +1703,139 @@ async def _run_plan(update, context, pending):
     await note.edit_text(chunks[0])
     for ch in chunks[1:]:
         await context.bot.send_message(chat_id, ch)
+
+
+# ------------------------------------------------------------------
+# БАЗА ЗНАНИЙ — команды /notion и /kb
+# ------------------------------------------------------------------
+
+async def cmd_knowledge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/kb — показать что сейчас в базе знаний."""
+    if not _KNOWLEDGE:
+        await update.message.reply_text(
+            "База знаний пуста.\n"
+            "• Закиньте файл (PDF, фото, DOCX, аудио) в чат — бот прочитает автоматически.\n"
+            "• /notion sync — подтянуть страницы из Notion."
+        )
+        return
+    lines = [f"📚 База знаний — {len(_KNOWLEDGE)} элементов:\n"]
+    for i, item in enumerate(_KNOWLEDGE, 1):
+        src = item["source"].replace("telegram_", "").upper()
+        lines.append(f"{i}. [{src}] {item['title']} — {item['added_at'][:10]}")
+    lines.append("\nГолосом или в /analyze и /plan эти материалы учитываются автоматически.")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_notion_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/notion sync — синхронизировать страницы из Notion в базу знаний."""
+    args = context.args or []
+    if not args or args[0].lower() != "sync":
+        await update.message.reply_text(
+            "Синхронизировать Notion → базу знаний:\n/notion sync\n\n"
+            "Нужна переменная NOTION_TOKEN (Internal Integration Secret).\n"
+            "Опционально: NOTION_PAGES — список page_id через запятую."
+        )
+        return
+
+    if not NOTION_TOKEN:
+        await update.message.reply_text("❌ Не задан NOTION_TOKEN.")
+        return
+    if not _NOTION_SDK_OK:
+        await update.message.reply_text(
+            "❌ Библиотека notion-client не установлена. Добавь в requirements.txt:\nnotion-client"
+        )
+        return
+
+    status_msg = await update.message.reply_text("🔄 Подключаюсь к Notion…")
+
+    try:
+        client = NotionClient(auth=NOTION_TOKEN)
+
+        # получаем список страниц для синка
+        if NOTION_PAGES:
+            page_ids = NOTION_PAGES
+        else:
+            # ищем все страницы доступные интеграции
+            search_result = await client.search(filter={"property": "object", "value": "page"})
+            page_ids = [r["id"] for r in search_result.get("results", [])][:30]
+
+        if not page_ids:
+            await status_msg.edit_text("Notion: нет доступных страниц. Поделись страницами с интеграцией.")
+            return
+
+        await status_msg.edit_text(f"🔄 Читаю {len(page_ids)} страниц из Notion…")
+
+        added = 0
+        skipped = 0
+        for page_id in page_ids:
+            try:
+                page_meta = await client.pages.retrieve(page_id=page_id)
+                # извлекаем заголовок
+                props = page_meta.get("properties", {})
+                title = ""
+                for prop in props.values():
+                    if prop.get("type") == "title":
+                        rich = prop.get("title", [])
+                        title = "".join(r.get("plain_text", "") for r in rich).strip()
+                        break
+                title = title or page_id[:8]
+
+                content = await _notion_extract_blocks(client, page_id)
+                if not content.strip():
+                    skipped += 1
+                    continue
+
+                ok = await asyncio.to_thread(
+                    _add_knowledge_item, "notion", page_id, title, content
+                )
+                if ok:
+                    added += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.error("Notion page %s: %s", page_id, e)
+                skipped += 1
+
+        await client.aclose()
+        await status_msg.edit_text(
+            f"✅ Notion синхронизирован.\n"
+            f"Добавлено: {added}  ·  Пропущено/уже есть: {skipped}\n"
+            f"Всего в базе знаний: {len(_KNOWLEDGE)}"
+        )
+
+    except Exception as e:
+        logger.error("cmd_notion_sync: %s", e)
+        await status_msg.edit_text(f"⚠️ Ошибка Notion: {e}")
+
+
+async def _notion_extract_blocks(client, block_id: str, depth: int = 0) -> str:
+    """Рекурсивно извлекает текст из блоков Notion-страницы."""
+    if depth > 3:
+        return ""
+    try:
+        resp = await client.blocks.children.list(block_id=block_id, page_size=100)
+    except Exception:
+        return ""
+    lines = []
+    for block in resp.get("results", []):
+        btype = block.get("type", "")
+        content = block.get(btype, {})
+        rich = content.get("rich_text", [])
+        text = "".join(r.get("plain_text", "") for r in rich).strip()
+        if text:
+            prefix = "  " * depth
+            if btype.startswith("heading"):
+                prefix += "# "
+            elif btype in ("bulleted_list_item", "to_do"):
+                prefix += "• "
+            elif btype == "numbered_list_item":
+                prefix += "  "
+            lines.append(prefix + text)
+        if block.get("has_children") and len(lines) < 200:
+            child_text = await _notion_extract_blocks(client, block["id"], depth + 1)
+            if child_text:
+                lines.append(child_text)
+    return "\n".join(lines)[:6000]
 
 
 def _flatten_text(t):
@@ -1999,6 +2409,8 @@ async def _set_commands(app):
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
+            BotCommand("notion", "Синхронизировать Notion → база знаний"),
+            BotCommand("kb", "Показать базу знаний"),
             BotCommand("id", "ID этого чата"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Что умеет бот"),
@@ -2073,6 +2485,8 @@ def main():
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("ai", cmd_ai_check))
+    app.add_handler(CommandHandler("notion", cmd_notion_sync))
+    app.add_handler(CommandHandler("kb", cmd_knowledge))
     app.add_handler(CallbackQueryHandler(on_menu, pattern="^menu::"))
     app.add_handler(CallbackQueryHandler(on_set_status, pattern="^setstatus::"))
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
@@ -2082,6 +2496,10 @@ def main():
     app.add_handler(conv)
     # импорт истории: result.json экспорта Telegram (вне диалога /new)
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), on_history_import))
+    # файлы в группе → база знаний (group=1 — не мешает диалогу /new)
+    app.add_handler(
+        MessageHandler(filters.Document.ALL | filters.PHOTO, on_file), group=1
+    )
     # фоновый сбор сообщений для /analyze — отдельная группа, чтобы не мешать диалогу
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_log_message), group=1)
 
@@ -2109,6 +2527,7 @@ def main():
         )
 
     _load_llm_state()
+    _load_knowledge()
     llm.set_persistence(lambda: asyncio.to_thread(_save_llm_state))
     llm.register(app)
     llm.register_runner("analyze", _run_analyze)
