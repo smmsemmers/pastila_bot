@@ -417,7 +417,8 @@ def read_due_today(today=None):
     STATUS,
     SESSION_TITLE,
     SESSION_CONTENT,
-) = range(10)
+    EDIT_VALUE,
+) = range(11)
 
 # Варианты для кнопок
 WHO_OPTIONS = ["Лена", "Глеб", "Лена + Глеб"]
@@ -2807,6 +2808,7 @@ PIN_SECTIONS = {
         "<code>/new</code> — создать задачу (диалог по шагам)\n"
         "<code>/list</code> — открытые задачи по людям\n"
         "<code>/status</code> — сменить статус (ответом на карточку)\n"
+        "<code>/edit</code> — изменить любое поле задачи (ответом на карточку)\n"
         "<code>/digest</code> — дедлайны на сегодня\n"
         "<code>/alerts</code> — дедлайны на завтра\n"
         "<code>/recurring</code> — повторяющиеся задачи\n"
@@ -3478,6 +3480,218 @@ async def _check_triggers(chat_id: int, text: str, bot) -> None:
             logger.error("trigger notify: %s", e)
 
 
+# ------------------------------------------------------------------
+# /edit — редактирование любого поля существующей задачи
+# ------------------------------------------------------------------
+_EDIT_FIELDS = {
+    "title":     ("📌 Название",    "Введите новое название задачи:"),
+    "who":       ("👤 Кто",         "Кто исполнитель? Введите: Лена, Глеб, или Лена + Глеб"),
+    "deadline":  ("🗓 Дедлайн",     "Введите новый дедлайн (например: 28.06 или Backlog):"),
+    "dod":       ("✔ Критерий",    "Введите критерий готовности (DoD):"),
+    "steps":     ("📋 Шаги",        "Введите шаги через Enter (каждый шаг — новая строка):"),
+    "materials": ("📎 Материалы",   "Введите ссылки / описание материалов:"),
+    "tags":      ("🏷 Теги",        "Введите теги через запятую (например: #маркетинг, #срочно):"),
+    "status":    ("🚦 Статус",      "Введите новый статус (например: 🔵 WIP или 🟢 DONE):"),
+}
+
+
+def parse_task_text(text: str) -> dict:
+    """Разбирает текст карточки задачи обратно в dict для редактирования."""
+    data = {}
+    lines = text.split("\n")
+    i = 0
+    steps_lines = []
+    in_steps = False
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if stripped.startswith("📌"):
+            data["title"] = stripped.lstrip("📌").strip()
+            in_steps = False
+        elif stripped.startswith("✔"):
+            data["dod"] = stripped.replace("✔", "").replace("Готово когда:", "").strip()
+            in_steps = False
+        elif stripped.startswith("👤"):
+            # "👤  Лена   ·   🗓 28.06"
+            parts = stripped.replace("👤", "").split("·")
+            if parts:
+                data["who"] = parts[0].strip()
+            if len(parts) > 1:
+                data["deadline"] = parts[1].replace("🗓", "").strip()
+            in_steps = False
+        elif stripped == "Шаги:":
+            in_steps = True
+        elif in_steps and stripped.startswith("·"):
+            steps_lines.append(stripped.lstrip("·").strip())
+        elif stripped.startswith("📎"):
+            data["materials"] = stripped.replace("📎", "").strip()
+            in_steps = False
+        elif stripped.startswith("🏷"):
+            data["tags"] = stripped.replace("🏷", "").strip()
+            in_steps = False
+        elif stripped in STATUS_OPTIONS:
+            data["status"] = stripped
+            in_steps = False
+        i += 1
+
+    if steps_lines:
+        data["steps"] = "\n".join(steps_lines)
+    return data
+
+
+def update_task_field_in_sheet(old_title: str, field: str, value: str) -> bool:
+    """Обновляет поле задачи в Google Sheet. Возвращает True если строка найдена."""
+    # Только эти поля хранятся в Sheet
+    col_map = {"title": 3, "who": 2, "deadline": 4, "status": 5}
+    if field not in col_map:
+        return True  # поле только в сообщении — считаем успехом
+    ws = get_worksheet()
+    values = ws.get_all_values()
+    target_row = None
+    for idx, row in enumerate(values):
+        if idx == 0:
+            continue
+        if len(row) >= 3 and row[2].strip() == old_title.strip():
+            target_row = idx + 1
+    if target_row is None:
+        return False
+    ws.update_cell(target_row, col_map[field], value)
+    return True
+
+
+def _edit_field_keyboard() -> InlineKeyboardMarkup:
+    items = list(_EDIT_FIELDS.items())
+    rows = []
+    for j in range(0, len(items), 2):
+        rows.append([
+            InlineKeyboardButton(v[0], callback_data=f"editfield::{k}")
+            for k, v in items[j:j + 2]
+        ])
+    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="editfield::cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def cmd_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/edit в ответ на карточку задачи — меняет любое поле."""
+    msg = update.message
+    replied = msg.reply_to_message
+    text = (replied.text or replied.caption) if replied else None
+    if not text or "📌" not in text:
+        await msg.reply_text(
+            "Ответь командой /edit на сообщение с задачей — тогда выберу что изменить."
+        )
+        return ConversationHandler.END
+
+    data = parse_task_text(text)
+    title = data.get("title", "")
+    if not title:
+        await msg.reply_text("Не могу распознать карточку задачи.")
+        return ConversationHandler.END
+
+    context.user_data["edit_task"] = {
+        "title": title,
+        "data": data,
+        "chat_id": replied.chat_id,
+        "message_id": replied.message_id,
+        "has_tag": text.startswith("@"),
+        "tag_line": text.split("\n")[0] if text.startswith("@") else "",
+    }
+    await msg.reply_text(
+        f"✏️ Редактирую задачу: <b>{title}</b>\nЧто меняем?",
+        parse_mode="HTML",
+        reply_markup=_edit_field_keyboard(),
+    )
+    return EDIT_VALUE
+
+
+async def on_edit_field_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Нажата кнопка выбора поля для редактирования."""
+    query = update.callback_query
+    await query.answer()
+    field = query.data.split("::", 1)[1]
+
+    if field == "cancel":
+        context.user_data.pop("edit_task", None)
+        await query.edit_message_text("❌ Редактирование отменено.")
+        return ConversationHandler.END
+
+    info = context.user_data.get("edit_task")
+    if not info:
+        await query.edit_message_text("⏳ Сессия устарела. Используй /edit ещё раз.")
+        return ConversationHandler.END
+
+    info["field"] = field
+    _, prompt = _EDIT_FIELDS[field]
+    current = info["data"].get(field, "—")
+    await query.edit_message_text(
+        f"{prompt}\n\n<i>Сейчас: {current}</i>",
+        parse_mode="HTML",
+    )
+    return EDIT_VALUE
+
+
+async def on_edit_value_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Получено новое значение — обновляем карточку и таблицу."""
+    msg = update.message
+    info = context.user_data.get("edit_task")
+    if not info or "field" not in info:
+        return ConversationHandler.END
+
+    field = info["field"]
+    new_value = msg.text.strip()
+    old_title = info["title"]
+    data = info["data"]
+
+    # Обновляем dict с данными задачи
+    data[field] = new_value
+    # Если поменяли название — обновляем ключ поиска для Sheet
+    if field == "title":
+        info["title"] = new_value
+
+    # 1) Обновляем Google Sheet
+    sheet_ok = True
+    try:
+        sheet_ok = await asyncio.to_thread(
+            update_task_field_in_sheet, old_title, field, new_value
+        )
+    except Exception as e:
+        logger.error("edit sheet update: %s", e)
+        sheet_ok = False
+
+    # 2) Перестраиваем карточку и обновляем сообщение в группе
+    new_text = build_task_text(data)
+    if info.get("tag_line"):
+        new_text = f"{info['tag_line']}\n{new_text}"
+
+    msg_edited = False
+    try:
+        await context.bot.edit_message_text(
+            chat_id=info["chat_id"],
+            message_id=info["message_id"],
+            text=new_text,
+            reply_markup=quick_status_keyboard(),
+        )
+        msg_edited = True
+    except Exception as e:
+        logger.error("edit message update: %s", e)
+
+    _, label = _EDIT_FIELDS[field]
+    field_label = _EDIT_FIELDS[field][0]
+    status_parts = []
+    if msg_edited:
+        status_parts.append("✅ Карточка обновлена")
+    if sheet_ok and field in ("title", "who", "deadline", "status"):
+        status_parts.append("📊 Таблица обновлена")
+
+    context.user_data.pop("edit_task", None)
+    await msg.reply_text(
+        "\n".join(status_parts) if status_parts else "⚠️ Не удалось обновить.",
+    )
+    return ConversationHandler.END
+
+
 async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/tokens — статистика расхода токенов и стоимость с момента запуска."""
     report = llm.get_token_report()
@@ -3786,6 +4000,7 @@ async def _set_commands(app):
             BotCommand("recurring", "Повторяющиеся задачи"),
             BotCommand("remind_when", "Триггерное напоминание"),
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
+            BotCommand("edit", "Изменить поле задачи (ответом на карточку)"),
             BotCommand("tokens", "Статистика токенов и стоимость вызовов с запуска"),
             BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
             BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
@@ -3834,6 +4049,18 @@ def main():
                 logger.warning("Не смог отправить стартовый /pin: %s", e)
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+
+    edit_conv = ConversationHandler(
+        entry_points=[CommandHandler("edit", cmd_edit)],
+        states={
+            EDIT_VALUE: [
+                CallbackQueryHandler(on_edit_field_select, pattern="^editfield::"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_edit_value_received),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cmd_cancel)],
+        per_message=False,
+    )
 
     conv = ConversationHandler(
         entry_points=[
@@ -3909,6 +4136,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
     app.add_handler(CallbackQueryHandler(on_voice_status, pattern="^voicestatus::"))
     app.add_handler(MessageHandler(filters.VOICE, on_voice))
+    app.add_handler(edit_conv)
     app.add_handler(conv)
     # импорт истории: result.json экспорта Telegram (вне диалога /new)
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), on_history_import))
