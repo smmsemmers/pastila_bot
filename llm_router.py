@@ -223,6 +223,28 @@ def model_id_for(chat_id, task, context_text=""):
     return mid
 
 
+# ───────────────────────── кэширование промптов ─────────────────
+def sys_cached(text: str) -> dict:
+    """Системный промпт с маркером кэширования (Anthropic prompt cache)."""
+    return {
+        "role": "system",
+        "content": [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}],
+    }
+
+
+def user_with_cache(static_ctx: str, query: str) -> dict:
+    """User-сообщение: статичный блок (KB / лог) кэшируется, запрос — нет."""
+    if not static_ctx:
+        return {"role": "user", "content": query}
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": static_ctx, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": query},
+        ],
+    }
+
+
 # ───────────────────────── вызов модели ─────────────────────────
 async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
                    response_format=None, timeout=120, thinking_budget=0):

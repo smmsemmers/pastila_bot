@@ -492,25 +492,24 @@ def quick_status_keyboard():
 # ------------------------------------------------------------------
 def build_task_text(data):
     lines = []
-    lines.append(f"📌 ЗАДАЧА: {data.get('title', '')}")
+    lines.append(f"📌  {data.get('title', '').upper()}")
     if data.get("dod"):
-        lines.append(f"🏁 DoD: {data['dod']}")
-    lines.append("———————————")
-    lines.append(f"👤 КТО: {data.get('who', '')}")
-    lines.append(f"🗓️ ДЕДЛАЙН: {data.get('deadline', 'Backlog')}")
-    lines.append("———————————")
+        lines.append(f"✔  Готово когда: {data['dod']}")
+    lines.append("─" * 28)
+    lines.append(f"👤  {data.get('who', '')}   ·   🗓 {data.get('deadline', 'Backlog')}")
     if data.get("steps"):
-        lines.append("📋 ЧТО СДЕЛАТЬ")
+        lines.append("")
+        lines.append("Шаги:")
         for step in data["steps"].split("\n"):
             step = step.strip()
             if step:
-                lines.append(f"   ✦ {step}")
-        lines.append("———————————")
-    materials = data.get("materials") or "—"
-    lines.append(f"📎 МАТЕРИАЛЫ: {materials}")
+                lines.append(f"  · {step}")
+    materials = data.get("materials") or ""
+    if materials and materials != "—":
+        lines.append(f"\n📎  {materials}")
     if data.get("tags"):
-        lines.append(f"🏷️ ТЕГИ: {data['tags']}")
-    lines.append("———————————")
+        lines.append(f"🏷  {data['tags']}")
+    lines.append("─" * 28)
     lines.append(f"{data.get('status', '🟡 TODO')}")
     return "\n".join(lines)
 
@@ -1158,27 +1157,28 @@ VOICE_ROUTER_PROMPT = (
 )
 
 VOICE_ANALYSIS_PROMPT = (
-    "Ты — старший бизнес-аналитик и советник команды Pastila OS "
-    "(производство и продажа белёвской пастилы). "
-    "Участники: Глеб (@foxruso) — контент, коммуникации, стратегия, босс; "
+    "Ты — старший бизнес-советник команды Pastila OS "
+    "(производство и продажа белёвской пастилы, Тульская область).\n"
+    "Глеб (@foxruso) — контент, коммуникации, стратегия, шеф.\n"
     "Лена (@elenaisanewleet) — разработка, техника, продукт.\n\n"
 
-    "У тебя есть переписка команды. Ты можешь и должен:\n"
-    "• Анализировать бизнес-ситуацию и давать КОНКРЕТНЫЕ рекомендации с обоснованием\n"
-    "• Определять приоритеты — что важнее всего прямо сейчас и почему\n"
-    "• Честно оценивать чьи-то действия, подход или логику (не лизать, а помогать)\n"
-    "• Выявлять скрытые проблемы, риски, узкие места в переписке\n"
-    "• Находить закономерности, паттерны, повторяющиеся темы\n"
-    "• Давать своё мнение уверенно — тебя именно за это спрашивают\n"
-    "• Искать и цитировать переписку точно (имя: «цитата»)\n"
-    "• Предлагать следующие шаги, если это уместно\n\n"
+    "Что ты умеешь:\n"
+    "· Анализировать бизнес-ситуацию и давать конкретные рекомендации с обоснованием\n"
+    "· Определять приоритеты — что важнее всего прямо сейчас и почему\n"
+    "· Честно оценивать действия, подход или логику (не лизать, а помогать)\n"
+    "· Выявлять скрытые риски и узкие места\n"
+    "· Давать своё мнение уверенно — тебя за это и спрашивают\n"
+    "· Цитировать переписку точно: Имя: «цитата»\n\n"
+
+    "Если в ответе ты замечаешь очевидно лучший способ сделать что-то — "
+    "добавь в конце блок:\n"
+    "💡 Совет: [одно конкретное предложение как улучшить]\n\n"
 
     "Правила ответа:\n"
-    "— Конкретно и по делу, без воды и вступлений\n"
-    "— Если спрашивают мнение — дай его чётко, с аргументами\n"
-    "— Цитируй переписку когда важно показать источник\n"
-    "— Обычный текст, без markdown-звёздочек\n"
-    "— Если данных не хватает — скажи честно что именно не видно и что стоит уточнить"
+    "· Конкретно и по делу, без вступлений и воды\n"
+    "· Если спрашивают мнение — дай его чётко, с аргументами\n"
+    "· Обычный текст, без markdown-звёздочек\n"
+    "· Если данных не хватает — скажи честно что именно не видно"
 )
 
 
@@ -1216,13 +1216,12 @@ async def _gpt_voice_analyze(clean_text, chat_log, chat_id):
     log_text = await llm.prepare_context(chat_log, chat_id, task="voice_route")
     model_id = llm.model_id_for(chat_id, "voice_route", log_text + " " + clean_text)
     kb = _kb_context()
-    user = (f"Сегодня {now:%d.%m.%Y}.\n\n"
-            f"Запрос: {clean_text}\n\n"
-            f"Переписка команды (имя: текст):\n{log_text}"
-            + (f"\n\n{kb}" if kb else ""))
+    static_ctx = f"Сегодня {now:%d.%m.%Y}.\n\nПереписка команды:\n{log_text}"
+    if kb:
+        static_ctx += f"\n\nБаза знаний:\n{kb}"
     return await llm.call_llm(
-        [{"role": "system", "content": VOICE_ANALYSIS_PROMPT},
-         {"role": "user", "content": user}],
+        [llm.sys_cached(VOICE_ANALYSIS_PROMPT),
+         llm.user_with_cache(static_ctx, f"Запрос: {clean_text}")],
         model_id, temperature=0.3, max_tokens=900,
     )
 
@@ -1557,7 +1556,7 @@ async def _maybe_check_insight(chat_id: int, msg_id: int, msg_text: str, bot) ->
 
     try:
         raw = await llm.call_llm(
-            [{"role": "system", "content": INSIGHT_PROMPT},
+            [llm.sys_cached(INSIGHT_PROMPT),
              {"role": "user", "content": transcript}],
             "haiku45", temperature=0, max_tokens=250,
             response_format={"type": "json_object"},
@@ -1600,7 +1599,9 @@ async def _maybe_check_insight(chat_id: int, msg_id: int, msg_text: str, bot) ->
         tags_line = "  " + " ".join(f"#{t}" for t in tags) if tags else ""
         await bot.send_message(
             chat_id,
-            f"💡 {author}, это важно — сохранила.\n_{why}_{tags_line}",
+            f"⭐ Сохранила в базу знаний.\n\n"
+            f"«{quote[:120]}{'…' if len(quote) > 120 else ''}»\n\n"
+            f"{why}{tags_line}",
         )
 
 
@@ -1807,11 +1808,12 @@ async def _gpt_analyze(transcript, model_id):
     """Просит модель найти задачи в переписке. Возвращает список dict."""
     now = datetime.datetime.now(TZINFO)
     kb = _kb_context(max_chars_per_item=400, max_total=3000)
-    user = (f"Сегодня {now:%d.%m.%Y}. Переписка (имя: текст):\n{transcript}"
-            + (f"\n\n{kb}" if kb else ""))
+    static_ctx = f"Сегодня {now:%d.%m.%Y}.\n\nПереписка:\n{transcript}"
+    if kb:
+        static_ctx += f"\n\nКонтекст:\n{kb}"
     content = await llm.call_llm(
-        [{"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
-         {"role": "user", "content": user}],
+        [llm.sys_cached(ANALYZE_SYSTEM_PROMPT),
+         llm.user_with_cache(static_ctx, "Найди задачи.")],
         model_id, temperature=0, max_tokens=900,
         response_format={"type": "json_object"},
     )
@@ -1878,12 +1880,21 @@ def _chunks(text, size=4000):
 
 
 PLAN_SYSTEM_PROMPT = (
-    "Ты — ассистент-планировщик небольшой команды (Лена и Глеб), проект Pastila OS. "
-    "На основе переписки (и доп. контекста, если он есть) составь КОНКРЕТНЫЙ план работы — "
-    "отдельно для Лены и отдельно для Глеба. Для каждого: что сделать и в каком порядке "
-    "(по приоритету), сроки — если упоминались. По пунктам, кратко, без воды. "
-    "Формат:\n\n📋 План для Лены:\n1. …\n2. …\n\n📋 План для Глеба:\n1. …\n2. …\n\n"
-    "Если по человеку задач нет — так и напиши. Обычный текст, без markdown-звёздочек."
+    "Ты — планировщик команды Pastila OS (белёвская пастила).\n"
+    "Глеб — контент, коммуникации, стратегия. Лена — разработка, техника, продукт.\n\n"
+    "На основе переписки составь конкретный план работы — отдельно для каждого.\n"
+    "Для каждого: что сделать, в каком порядке (по приоритету), срок если был.\n\n"
+    "Формат ответа (строго):\n\n"
+    "📋 Лена\n"
+    "1. Задача — срок\n"
+    "2. Задача — срок\n\n"
+    "📋 Глеб\n"
+    "1. Задача — срок\n"
+    "2. Задача — срок\n\n"
+    "Если по кому-то задач нет — напиши «Нет активных задач».\n"
+    "Без вступлений, без markdown-звёздочек, без воды.\n\n"
+    "Если видишь явное узкое место или риск — добавь в конце:\n"
+    "⚠️ Обратите внимание: [конкретно и кратко]"
 )
 
 
@@ -1891,15 +1902,15 @@ async def _gpt_plan(transcript, extra, model_id):
     """Просит модель составить план работы для Лены и Глеба. Возвращает текст."""
     now = datetime.datetime.now(TZINFO)
     kb = _kb_context(max_chars_per_item=500, max_total=4000)
-    parts = [f"Сегодня {now:%d.%m.%Y}."]
+    static_parts = [f"Сегодня {now:%d.%m.%Y}."]
     if extra:
-        parts.append(f"Дополнительный контекст: {extra}")
-    parts.append(f"Переписка (имя: текст):\n{transcript}")
+        static_parts.append(f"Контекст: {extra}")
+    static_parts.append(f"Переписка:\n{transcript}")
     if kb:
-        parts.append(kb)
+        static_parts.append(f"База знаний:\n{kb}")
     return await llm.call_llm(
-        [{"role": "system", "content": PLAN_SYSTEM_PROMPT},
-         {"role": "user", "content": "\n\n".join(parts)}],
+        [llm.sys_cached(PLAN_SYSTEM_PROMPT),
+         llm.user_with_cache("\n\n".join(static_parts), "Составь план.")],
         model_id, temperature=0.2, max_tokens=1500,
     )
 
@@ -2793,19 +2804,22 @@ def pin_back_keyboard():
 
 
 _STRATEGY_PROMPT = (
-    "Ты — стратегический советник команды Pastila OS (белёвская пастила, Лена + Глеб).\n\n"
-    "О команде:\n"
-    "• Глеб (@foxruso) — контент, коммуникации, стратегия, шеф\n"
-    "• Лена (@elenaisanewleet) — разработка, техника, продукт\n"
-    "Мы производим и продаём белёвскую пастилу. Цель — вырасти в живой бренд с историей.\n\n"
-    "Задача: ответить на вопрос «Что делать дальше, чтобы сдвинуться и построить крутой бизнес?»\n\n"
-    "Учти текущую базу знаний команды (прошлые решения, идеи, материалы) и историю задач.\n"
-    "Дай конкретный, смелый и честный ответ:\n"
-    "1. Где сейчас реальная узкое место (честно, без лести)\n"
-    "2. ТОП-3 действия на ближайшие 2 недели — конкретные, с ответственными (Лена / Глеб)\n"
-    "3. Одна большая идея на горизонте 3 месяцев\n"
-    "4. Что НЕ делать сейчас (стоп-лист)\n\n"
-    "Формат: обычный текст, без лишних оговорок. Говори прямо как партнёр, а не консультант."
+    "Ты — партнёр команды Pastila OS (белёвская пастила, Тульская область).\n"
+    "Глеб (@foxruso) — контент, коммуникации, стратегия, шеф.\n"
+    "Лена (@elenaisanewleet) — разработка, техника, продукт.\n"
+    "Цель: вырасти в живой бренд с историей и устойчивыми продажами.\n\n"
+    "Тебе дают базу знаний команды и историю переписки.\n"
+    "Ответь конкретно и прямо — как партнёр, а не консультант.\n\n"
+    "Структура ответа:\n\n"
+    "🔍 Узкое место\n"
+    "Где сейчас настоящий стоп? Честно, без смягчений.\n\n"
+    "🎯 ТОП-3 на 2 недели\n"
+    "Конкретные действия — кто делает, что именно, зачем.\n\n"
+    "💡 Большая идея на 3 месяца\n"
+    "Одна — самая значимая.\n\n"
+    "🚫 Стоп-лист\n"
+    "Что НЕ делать прямо сейчас — и почему.\n\n"
+    "Без вводных фраз. Без «конечно» и «безусловно». Говори как человек с опытом в теме."
 )
 
 
@@ -2813,8 +2827,8 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/strategy — стратегический анализ «что делать дальше» на самой мощной модели с thinking."""
     msg = update.effective_message
     wait = await msg.reply_text(
-        "🧠 Подключаю Claude Opus 4.8 с расширенным мышлением…\n"
-        "Это займёт 30–60 секунд."
+        "🧠 Думаю… Claude Opus 4.8 + extended thinking.\n"
+        "Обычно занимает 30–60 сек."
     )
     try:
         kb_ctx = _kb_context(max_chars_per_item=1000, max_total=6000)
@@ -2832,10 +2846,8 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         flagship_id = llm.MODELS["opus48"]["id"]
         answer = await llm.call_llm(
-            [
-                {"role": "system", "content": _STRATEGY_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
+            [llm.sys_cached(_STRATEGY_PROMPT),
+             {"role": "user", "content": user_content}],
             model_id=flagship_id,
             max_tokens=4000,
             thinking_budget=8000,
