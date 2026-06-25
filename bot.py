@@ -2680,6 +2680,8 @@ PIN_MAIN_TEXT = (
     "Два бота, одна таблица — всё под рукой.\n\n"
     "👥 <b>Глеб</b> @foxruso — контент, коммуникации, стратегия, шеф\n"
     "👩‍💻 <b>Лена</b> @elenaisanewleet — разработка, техника, продукт\n\n"
+    "🤖 @PastilaTaskBot — задачи, планирование, база знаний, ИИ-анализ\n"
+    "💻 @pastila_code_remote_bot — Claude Code, код, архитектура, деплой\n\n"
     f'📊 <a href="{_SHEET_URL}">Google Sheets — таблица задач</a>\n\n'
     "Выберите раздел ↓"
 )
@@ -2794,32 +2796,41 @@ PIN_SECTIONS = {
     ),
     "commands": (
         "⚙️ Все команды",
-        "<b>⚙️ Полный список команд</b>\n\n"
+        "<b>⚙️ Полный список команд — @PastilaTaskBot</b>\n\n"
         "<b>Задачи:</b>\n"
-        "<code>/new</code> — создать задачу\n"
-        "<code>/list</code> — открытые задачи\n"
-        "<code>/status</code> — сменить статус (ответом)\n"
+        "<code>/new</code> — создать задачу (диалог по шагам)\n"
+        "<code>/list</code> — открытые задачи по людям\n"
+        "<code>/status</code> — сменить статус (ответом на карточку)\n"
         "<code>/digest</code> — дедлайны на сегодня\n"
         "<code>/alerts</code> — дедлайны на завтра\n"
-        "<code>/purge</code> — очистить все задачи\n\n"
-        "<b>Анализ и план:</b>\n"
+        "<code>/recurring</code> — повторяющиеся задачи\n"
+        "<code>/purge</code> — очистить все задачи из таблицы\n\n"
+        "<b>Быстрые действия:</b>\n"
+        "<code>/q [идея]</code> — мгновенно сохранить мысль в KB\n"
+        "<code>/dash</code> — сводка: задачи, просрочены, KB\n"
+        "<code>/post [идея]</code> — черновик поста для соцсетей\n"
+        "<code>/remind_when слово — напоминание</code> — триггер по слову в чате\n\n"
+        "<b>ИИ-анализ:</b>\n"
         "<code>/analyze</code> — найти задачи в переписке\n"
         "<code>/plan</code> — план для Лены и Глеба\n"
-        "<code>/menu</code> — быстрое меню\n\n"
+        "<code>/strategy</code> — стратегический совет (Opus + thinking)\n"
+        "<code>/deep</code> — глубокий анализ всего: задачи + KB + проблемы + план\n"
+        "<code>/menu</code> — быстрое интерактивное меню\n\n"
         "<b>База знаний:</b>\n"
-        "<code>/session [название]</code> — добавить диалог из Claude/GPT\n"
-        "<code>/find [слово/#тег]</code> — поиск в базе\n"
-        "<code>/kb</code> — список всей базы знаний\n"
+        "<code>/session [название]</code> — добавить лог из Claude/GPT\n"
+        "<code>/find [слово/#тег]</code> — поиск по базе\n"
+        "<code>/kb</code> — весь список базы знаний\n"
         "<code>/notion sync</code> — синхронизация с Notion\n\n"
         "<b>Настройки ИИ:</b>\n"
-        "<code>/model</code> — выбрать языковую модель\n"
-        "<code>/trim</code> — настроить сжатие контекста\n"
+        "<code>/model</code> — выбрать языковую модель (30+)\n"
+        "<code>/trim</code> — уровень сжатия контекста\n"
         "<code>/ai</code> — проверить соединение\n\n"
         "<b>Управление:</b>\n"
-        "<code>/start</code> / <code>/help</code> — справка\n"
-        "<code>/welcome</code> — показать баннер бота\n"
-        "<code>/cancel</code> — отменить текущий диалог\n"
-        "<code>/pin</code> — обновить это сообщение",
+        "<code>/pin</code> — показать этот гайд\n"
+        "<code>/welcome</code> — баннер бота\n"
+        "<code>/cancel</code> — отменить диалог\n\n"
+        "<b>@pastila_code_remote_bot</b> — Claude Code:\n"
+        "Написать любую задачу текстом → Claude напишет код, задеплоит.",
     ),
     "team": (
         "👥 Команда",
@@ -2849,21 +2860,23 @@ PIN_SECTIONS = {
         "1. Открыть Terminal (Cmd+Space → Terminal)\n"
         "2. Перейти в папку проекта:\n"
         "   <code>cd ~/pastila_bot</code>\n"
-        "3. Запустить Claude Code:\n"
-        "   <code>claude</code>\n"
-        "4. Написать что нужно сделать — например:\n"
-        "   <i>«добавь команду /stats которая показывает статистику задач»</i>\n\n"
-        "Claude сам читает код, вносит изменения, проверяет синтаксис и пушит в GitHub.\n"
-        "Render видит push → автоматически деплоит новую версию бота.\n\n"
+        "3. Запустить Claude Code с Telegram-коннектором:\n"
+        "   <code>claude --channels plugin:telegram@claude-plugins-official</code>\n\n"
+        "   (без --channels: Claude работает только в терминале)\n"
+        "   (с --channels: Claude читает чат и может отвечать прямо в Telegram)\n\n"
+        "4. Написать задачу — например:\n"
+        "   <i>«добавь команду /stats которая показывает статистику»</i>\n\n"
+        "Claude читает код, вносит правки, проверяет, пушит в GitHub.\n"
+        "Render видит push → деплоит → бот обновлён через 2–3 мин.\n\n"
         "─────────────────────────\n"
-        "<b>Подключённые коннекторы</b>\n\n"
-        "🔌 <b>Telegram</b> — Claude видит сообщения из чата и может отвечать прямо в него\n"
-        "📝 <b>Notion</b> — читает и редактирует страницы в Notion\n"
-        "🔍 <b>Atlassian</b> — подключён (Jira/Confluence если понадобится)\n\n"
+        "<b>Активные коннекторы</b>\n\n"
+        "🔌 <b>Telegram</b> — Claude видит сообщения группы, отвечает в чат\n"
+        "📝 <b>Notion</b> — читает и редактирует страницы\n"
+        "🔍 <b>Atlassian</b> — Jira / Confluence (когда понадобится)\n"
+        "🌐 <b>WebSearch / WebFetch</b> — поиск в интернете и чтение сайтов\n\n"
         "─────────────────────────\n"
-        "<b>Весь путь изменения</b>\n\n"
-        "Терминал → Claude пишет код → git push → Render деплоит → бот обновлён\n"
-        "Обычно занимает 2–5 минут от идеи до живой фичи.\n\n"
+        "<b>Полный цикл изменения</b>\n\n"
+        "Терминал → задача Claude → код написан → git push → Render деплоит → бот обновлён\n\n"
         "Код: github.com/smmsemmers/pastila_bot",
     ),
     "story": (
@@ -2919,6 +2932,93 @@ def pin_back_keyboard():
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("⬅️ Главная", callback_data="pin::menu")]]
     )
+
+
+# ------------------------------------------------------------------
+# /deep — глубокий анализ: задачи + KB + переписка + проблемы + план
+# ------------------------------------------------------------------
+_DEEP_PROMPT = (
+    "Ты — старший партнёр и бизнес-аналитик команды Pastila OS.\n"
+    "Глеб (@foxruso) — контент, коммуникации, стратегия, шеф.\n"
+    "Лена (@elenaisanewleet) — разработка, техника, продукт.\n"
+    "Продукт: белёвская пастила ручной работы, Тульская область.\n\n"
+    "Тебе переданы: все открытые задачи, база знаний, переписка команды.\n"
+    "Твоя задача — провести ГЛУБОКИЙ анализ и выдать структурированный доклад.\n\n"
+    "Структура доклада:\n\n"
+    "📊 Текущая ситуация\n"
+    "Что происходит в бизнесе прямо сейчас — честная картина без прикрас.\n\n"
+    "🔴 Проблемы и узкие места\n"
+    "Конкретные проблемы с доказательствами из задач и переписки.\n"
+    "Для каждой: суть → почему критично → что будет если не решить.\n\n"
+    "🟡 Риски на горизонте\n"
+    "Что может пойти не так в ближайшие 1–3 месяца.\n\n"
+    "🟢 Возможности\n"
+    "Что сейчас недоиспользуется или можно захватить.\n\n"
+    "🎯 Приоритетный план действий\n"
+    "Топ-5 конкретных шагов — кто, что, зачем, срок.\n"
+    "Отсортировать по влиянию на бизнес.\n\n"
+    "💡 Неочевидный инсайт\n"
+    "Одно наблюдение которое команда, возможно, не замечает.\n\n"
+    "Стиль: прямо, конкретно, без воды. Факты и выводы — не общие слова.\n"
+    "Цитируй переписку и задачи когда это подкрепляет тезис."
+)
+
+
+async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/deep — глубокий анализ всего: задачи + KB + переписка → проблемы + план."""
+    msg = update.effective_message
+    wait = await msg.reply_text(
+        "🔬 Запускаю глубокий анализ…\n"
+        "Читаю задачи, базу знаний, переписку. Займёт 60–90 сек."
+    )
+    try:
+        # Читаем все открытые задачи
+        try:
+            groups = await asyncio.to_thread(read_open_tasks)
+            task_lines = []
+            for who, tasks in groups.items():
+                for t in tasks:
+                    task_lines.append(
+                        f"[{t['status']}] {who}: {t['title']} · дедлайн {t['deadline']}"
+                    )
+            tasks_ctx = "\n".join(task_lines) if task_lines else "Открытых задач нет."
+        except Exception:
+            tasks_ctx = "(задачи недоступны)"
+
+        # База знаний
+        kb_ctx = _kb_context(max_chars_per_item=600, max_total=5000)
+
+        # Переписка
+        chat_log = _CHAT_LOG.get(msg.chat_id, [])
+        log_text = await llm.prepare_context(chat_log, msg.chat_id, task="analyze")
+
+        now = datetime.datetime.now(TZINFO)
+        static_ctx = (
+            f"Дата анализа: {now:%d.%m.%Y}\n\n"
+            f"=== ОТКРЫТЫЕ ЗАДАЧИ ({len(task_lines) if task_lines else 0}) ===\n{tasks_ctx}\n\n"
+            f"=== БАЗА ЗНАНИЙ ===\n{kb_ctx or 'Пусто.'}\n\n"
+            f"=== ПЕРЕПИСКА КОМАНДЫ ===\n{log_text or 'Нет данных.'}"
+        )
+
+        flagship_id = llm.MODELS["opus48"]["id"]
+        report = await llm.call_llm(
+            [llm.sys_cached(_DEEP_PROMPT),
+             llm.user_with_cache(static_ctx, "Проведи глубокий анализ. Выдай полный доклад.")],
+            model_id=flagship_id,
+            max_tokens=5000,
+            thinking_budget=12000,
+            timeout=210,
+        )
+
+        # Разбиваем на части если длинно
+        chunks = _chunks(report.strip(), size=4000)
+        await wait.edit_text(f"🔬 <b>Глубокий анализ</b>\n\n{chunks[0]}", parse_mode="HTML")
+        for ch in chunks[1:]:
+            await msg.reply_text(ch, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error("cmd_deep: %s", e)
+        await wait.edit_text(f"⚠️ Ошибка при анализе: {e}")
 
 
 _STRATEGY_PROMPT = (
@@ -3643,6 +3743,7 @@ async def _set_commands(app):
             BotCommand("recurring", "Повторяющиеся задачи"),
             BotCommand("remind_when", "Триггерное напоминание"),
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
+            BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
             BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
             BotCommand("pin", "Интерактивное описание группы с навигацией"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
@@ -3749,6 +3850,7 @@ def main():
     app.add_handler(CommandHandler("remind_when", cmd_remind_when))
     app.add_handler(CallbackQueryHandler(on_alert_action, pattern="^alert::"))
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
+    app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
     app.add_handler(CommandHandler("pin", cmd_pin))
     app.add_handler(CallbackQueryHandler(on_pin_nav, pattern="^pin::"))
