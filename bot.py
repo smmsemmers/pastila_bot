@@ -1090,18 +1090,67 @@ async def build_and_send_alerts(bot):
         targets = _alert_targets(t["who"])
         if not targets:
             continue  # неизвестный исполнитель — пропускаем
-        body = f"⏰ Дедлайн завтра ({tomorrow})!\n{t['status']}  {t['title']}"
+        body = f"⏰ Дедлайн завтра ({tomorrow})\n{t['status']}  {t['title']}"
         for thread_id, tag in targets:
             try:
                 await bot.send_message(
                     chat_id=GROUP_CHAT_ID,
                     message_thread_id=thread_id,
                     text=f"{tag}\n{body}",
+                    reply_markup=_alert_keyboard(t["title"]),
                 )
                 count += 1
             except Exception as e:
                 logger.error("Алерт: не смог отправить в топик %s: %s", thread_id, e)
     return count
+
+
+def _alert_keyboard(title: str) -> InlineKeyboardMarkup:
+    """Кнопки под дедлайн-алертом: быстро сменить статус или перенести."""
+    safe = title[:40]
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Готово", callback_data=f"alert::done::{safe}"),
+            InlineKeyboardButton("🔵 В работу", callback_data=f"alert::wip::{safe}"),
+        ],
+        [InlineKeyboardButton("📅 Перенести на день", callback_data=f"alert::postpone::{safe}")],
+    ])
+
+
+async def on_alert_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопки под дедлайн-алертом: done / wip / postpone."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("::", 2)
+    action, title = parts[1], parts[2]
+    if action == "done":
+        ok = await asyncio.to_thread(update_task_status, title, "🟢 DONE")
+        await query.edit_message_text(
+            query.message.text + "\n\n✅ Статус обновлён → DONE" if ok
+            else query.message.text + "\n\n⚠️ Задача не найдена в таблице."
+        )
+    elif action == "wip":
+        ok = await asyncio.to_thread(update_task_status, title, "🔵 WIP")
+        await query.edit_message_text(
+            query.message.text + "\n\n🔵 Статус обновлён → В работе" if ok
+            else query.message.text + "\n\n⚠️ Задача не найдена."
+        )
+    elif action == "postpone":
+        try:
+            ws = get_worksheet()
+            records = await asyncio.to_thread(ws.get_all_records)
+            tomorrow = (datetime.datetime.now(TZINFO) + datetime.timedelta(days=2)).strftime("%d.%m")
+            for idx, row in enumerate(records):
+                if str(row.get("Задача", "")).strip().startswith(title):
+                    await asyncio.to_thread(ws.update_cell, idx + 2, 4, tomorrow)
+                    await query.edit_message_text(
+                        query.message.text + f"\n\n📅 Дедлайн перенесён на {tomorrow}"
+                    )
+                    return
+            await query.edit_message_text(query.message.text + "\n\n⚠️ Задача не найдена.")
+        except Exception as e:
+            logger.error("alert postpone: %s", e)
+            await query.edit_message_text(query.message.text + "\n\n⚠️ Ошибка при переносе.")
 
 
 async def send_deadline_alerts(context: ContextTypes.DEFAULT_TYPE):
@@ -1278,6 +1327,10 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         transcript = await _whisper_transcribe(bytes(audio))
         if not transcript.strip():
             await status_msg.edit_text("🤔 Не разобрал речь. Попробуй ещё раз или /new.")
+            return
+        # длинное голосовое (>50 слов) → структурированный разбор вместо роутинга
+        if len(transcript.split()) > 50:
+            await _handle_long_voice(msg, transcript, status_msg)
             return
         result = await _gpt_voice_route(transcript, msg.chat_id)
     except Exception as e:
@@ -1491,9 +1544,12 @@ async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buf.append((name, msg.text))
     if len(buf) > _LOG_MAX:
         del buf[: len(buf) - _LOG_MAX]
-    # фоновая проверка на важные мысли (не блокирует ответ)
+    # фоновые задачи — не блокируют ответ
     asyncio.create_task(
         _maybe_check_insight(msg.chat_id, msg.message_id, msg.text, context.bot)
+    )
+    asyncio.create_task(
+        _check_triggers(msg.chat_id, msg.text, context.bot)
     )
 
 
@@ -2823,6 +2879,406 @@ _STRATEGY_PROMPT = (
 )
 
 
+# ------------------------------------------------------------------
+# /q — быстрая идея в одну строку
+# ------------------------------------------------------------------
+async def cmd_quick_idea(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/q [текст] — мгновенно сохраняет идею в базу знаний без диалога."""
+    text = " ".join(context.args).strip()
+    if not text:
+        await update.message.reply_text("Напиши идею: /q текст идеи")
+        return
+    item_id = f"q_{hashlib.md5(text.encode()).hexdigest()[:10]}"
+    title = text[:80]
+    await asyncio.to_thread(_add_knowledge_item, "quick", item_id, title, text, ["идея"])
+    await update.message.reply_text(
+        f"✅ Сохранено в базу знаний #идея\n\n«{title}{'…' if len(text) > 80 else ''}»"
+    )
+
+
+# ------------------------------------------------------------------
+# /dash — живая сводка одним сообщением
+# ------------------------------------------------------------------
+async def cmd_dash(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/dash — сводка: задачи по людям, просрочены, KB, последняя активность."""
+    msg = await update.message.reply_text("📊 Читаю данные…")
+    try:
+        groups = await asyncio.to_thread(read_open_tasks)
+    except Exception as e:
+        await msg.edit_text(f"⚠️ Не смог прочитать таблицу: {e}")
+        return
+
+    today = datetime.datetime.now(TZINFO).strftime("%d.%m")
+    overdue: list[str] = []
+    wip_count = 0
+    total = 0
+    by_person: dict[str, int] = {}
+    all_tasks = []
+    for who, tasks in groups.items():
+        by_person[who] = len(tasks)
+        total += len(tasks)
+        for t in tasks:
+            all_tasks.append(t)
+            if "WIP" in t["status"].upper():
+                wip_count += 1
+            dl = t.get("deadline", "")
+            if dl and dl != "Backlog":
+                try:
+                    d = datetime.datetime.strptime(dl + f".{datetime.datetime.now(TZINFO).year}", "%d.%m.%Y")
+                    if d.date() < datetime.datetime.now(TZINFO).date():
+                        overdue.append(t["title"])
+                except ValueError:
+                    pass
+
+    lines = [f"📊 Дашборд  ·  {today}", ""]
+    for who in ["Лена", "Глеб", "Лена + Глеб"]:
+        n = by_person.get(who, 0)
+        if n:
+            lines.append(f"{'👩‍💻' if 'Лена' in who and 'Глеб' not in who else '👨‍💼' if who == 'Глеб' else '👥'}  {who}: {n} задач")
+    lines.append(f"\n🔵 В работе: {wip_count}")
+    if overdue:
+        lines.append(f"🔴 Просрочено: {len(overdue)}")
+        for t in overdue[:3]:
+            lines.append(f"   · {t[:50]}")
+    else:
+        lines.append("✅ Просроченных нет")
+    lines.append(f"\n📚 База знаний: {len(_KNOWLEDGE)} записей")
+    lines.append(f"📋 Открытых задач: {total}")
+    await msg.edit_text("\n".join(lines))
+
+
+# ------------------------------------------------------------------
+# /post — черновик поста для соцсетей
+# ------------------------------------------------------------------
+_POST_PROMPT = (
+    "Ты — копирайтер бренда Pastila OS (белёвская пастила ручной работы, Тульская область).\n"
+    "Голос бренда: живой, тёплый, с характером. Не рекламный. Не казённый.\n"
+    "Мы рассказываем историю продукта, людей и процесса — не продаём в лоб.\n\n"
+    "Напиши пост для Telegram/ВКонтакте на основе идеи пользователя.\n"
+    "Длина: 3–6 абзацев. Заканчивай чем-то живым — вопросом, деталью или призывом.\n"
+    "Без хэштегов. Без эмодзи через каждое слово. Можно 1–2 по делу.\n"
+    "Только текст поста — без предисловий и пояснений."
+)
+
+async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/post [идея] — генерирует черновик поста для соцсетей."""
+    idea = " ".join(context.args).strip()
+    if not idea and update.message.reply_to_message:
+        idea = update.message.reply_to_message.text or ""
+    if not idea:
+        await update.message.reply_text(
+            "Напиши идею: /post про то что мы делаем пастилу вручную\n"
+            "Или ответь на любое сообщение командой /post"
+        )
+        return
+    if not llm.OPENROUTER_API_KEY:
+        await update.message.reply_text("⚠️ Не задан OPENROUTER_API_KEY.")
+        return
+    wait = await update.message.reply_text("✍️ Пишу черновик…")
+    try:
+        model_id = llm.model_id_for(update.effective_chat.id, "plan", idea)
+        text = await llm.call_llm(
+            [llm.sys_cached(_POST_PROMPT),
+             {"role": "user", "content": f"Идея: {idea}"}],
+            model_id, temperature=0.7, max_tokens=800,
+        )
+        await wait.edit_text(f"✍️ Черновик поста\n\n{text.strip()}")
+    except Exception as e:
+        logger.error("cmd_post: %s", e)
+        await wait.edit_text(f"⚠️ Ошибка: {e}")
+
+
+# ------------------------------------------------------------------
+# Длинное голосовое → структура (транскрипт + действия + решения)
+# ------------------------------------------------------------------
+_VOICE_MEMO_PROMPT = (
+    "Ты — ассистент команды Pastila OS (белёвская пастила, Лена + Глеб).\n"
+    "Тебе дали транскрипт длинного голосового — брейнсторм, совещание или поток мыслей.\n\n"
+    "Выдай структуру:\n\n"
+    "📝 Суть (2–3 предложения — о чём речь)\n\n"
+    "✅ Действия\n"
+    "· [кто] — [что] — [срок если был]\n\n"
+    "💡 Ключевые решения или идеи\n"
+    "· ...\n\n"
+    "⚠️ Открытые вопросы (если есть)\n"
+    "· ...\n\n"
+    "Без лишних слов. Только то что реально было в тексте."
+)
+
+async def _handle_long_voice(msg, transcript: str, status_msg):
+    """Длинное голосовое (>30 слов) → структурированный разбор."""
+    model_id = llm.model_id_for(msg.chat_id, "plan", transcript)
+    await status_msg.edit_text("🎙 Длинное голосовое — разбираю структуру…")
+    try:
+        result = await llm.call_llm(
+            [llm.sys_cached(_VOICE_MEMO_PROMPT),
+             {"role": "user", "content": f"Транскрипт:\n{transcript}"}],
+            model_id, temperature=0.2, max_tokens=1000,
+        )
+        # предлагаем сохранить в KB
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💾 Сохранить в базу знаний", callback_data=f"savememo::0"),
+        ]])
+        sent = await status_msg.edit_text(result.strip(), reply_markup=keyboard)
+        # сохраняем транскрипт во временное хранилище по message_id
+        if not hasattr(msg, "_memo_store"):
+            pass
+        _MEMO_STORE[sent.message_id] = {"title": transcript[:60], "content": transcript, "summary": result.strip()}
+    except Exception as e:
+        logger.error("long voice memo: %s", e)
+        await status_msg.edit_text(f"⚠️ Ошибка разбора: {e}")
+
+_MEMO_STORE: dict[int, dict] = {}
+
+async def on_save_memo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка «Сохранить в KB» под разбором длинного голосового."""
+    query = update.callback_query
+    await query.answer()
+    data = _MEMO_STORE.get(query.message.message_id)
+    if not data:
+        await query.edit_message_text(query.message.text + "\n\n⚠️ Данные не найдены.")
+        return
+    item_id = f"memo_{hashlib.md5(data['content'][:100].encode()).hexdigest()[:10]}"
+    full = f"Транскрипт:\n{data['content']}\n\nРазбор:\n{data['summary']}"
+    await asyncio.to_thread(_add_knowledge_item, "voice_memo", item_id, data["title"], full, ["голосовое", "встреча"])
+    await query.edit_message_text(query.message.text + "\n\n✅ Сохранено в базу знаний.")
+
+
+# ------------------------------------------------------------------
+# Еженедельный отчёт — пятница 17:00
+# ------------------------------------------------------------------
+async def send_weekly_report(context: ContextTypes.DEFAULT_TYPE):
+    """Еженедельный отчёт: что закрыто, что открыто, что просрочено."""
+    if not GROUP_CHAT_ID:
+        return
+    try:
+        ws = get_worksheet()
+        records = await asyncio.to_thread(ws.get_all_records)
+    except Exception as e:
+        logger.error("weekly_report: %s", e)
+        return
+
+    done, open_tasks, overdue = [], [], []
+    today = datetime.datetime.now(TZINFO)
+    week_ago = (today - datetime.timedelta(days=7)).strftime("%d.%m")
+
+    for row in records:
+        status = str(row.get("Статус", "")).strip()
+        title = str(row.get("Задача", "")).strip()
+        who = str(row.get("Кто", "")).strip()
+        dl = str(row.get("Дедлайн", "")).strip()
+        is_closed = any(m in status.upper() for m in CLOSED_MARKERS)
+        if "DONE" in status.upper():
+            done.append(f"{who}: {title}")
+        elif not is_closed:
+            open_tasks.append({"title": title, "who": who, "deadline": dl, "status": status})
+            if dl and dl != "Backlog":
+                try:
+                    d = datetime.datetime.strptime(dl + f".{today.year}", "%d.%m.%Y")
+                    if d.date() < today.date():
+                        overdue.append(f"{who}: {title}")
+                except ValueError:
+                    pass
+
+    lines = [f"📊 Итоги недели  ·  {today.strftime('%d.%m.%Y')}", ""]
+    if done:
+        lines.append(f"✅ Закрыто на этой неделе: {len(done)}")
+        for t in done[-5:]:
+            lines.append(f"   · {t[:60]}")
+    else:
+        lines.append("⚠️ На этой неделе ничего не закрыто.")
+    lines.append("")
+    lines.append(f"📋 Открытых задач: {len(open_tasks)}")
+    if overdue:
+        lines.append(f"🔴 Просрочено: {len(overdue)}")
+        for t in overdue[:3]:
+            lines.append(f"   · {t[:60]}")
+    lines.append("")
+    lines.append("Хорошей недели! 🍬")
+
+    await context.bot.send_message(
+        chat_id=GROUP_CHAT_ID,
+        text="\n".join(lines),
+    )
+
+
+# ------------------------------------------------------------------
+# /recurring — повторяющиеся задачи
+# ------------------------------------------------------------------
+_REC_TAB = "_recurring"
+_REC_HEADERS = ["title", "who", "interval_days", "next_date", "tags"]
+
+
+def _recurring_ws():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS", "")
+    if not creds_json or not SHEET_ID:
+        return None
+    try:
+        creds = Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        sh = gspread.authorize(creds).open_by_key(SHEET_ID)
+        try:
+            return sh.worksheet(_REC_TAB)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(_REC_TAB, rows=200, cols=len(_REC_HEADERS))
+            ws.append_row(_REC_HEADERS)
+            return ws
+    except Exception as e:
+        logger.error("_recurring_ws: %s", e)
+        return None
+
+
+async def cmd_recurring(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/recurring [задача] — [кто] — каждые [N] дней  |  /recurring list  |  /recurring del [N]"""
+    args = " ".join(context.args).strip()
+    if not args or args == "list":
+        ws = await asyncio.to_thread(_recurring_ws)
+        if ws is None:
+            await update.message.reply_text("⚠️ Не смог подключиться к таблице.")
+            return
+        records = await asyncio.to_thread(ws.get_all_records)
+        if not records:
+            await update.message.reply_text(
+                "Повторяющихся задач нет.\n\n"
+                "Добавить: /recurring Обновить прайс — Лена — каждые 14 дней"
+            )
+            return
+        lines = ["🔁 Повторяющиеся задачи", ""]
+        for i, r in enumerate(records, 1):
+            lines.append(f"{i}. {r['title']} · {r['who']} · каждые {r['interval_days']} дн. · след. {r['next_date']}")
+        lines.append("\nУдалить: /recurring del [номер]")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    if args.startswith("del "):
+        idx = int(args[4:].strip()) - 1
+        ws = await asyncio.to_thread(_recurring_ws)
+        records = await asyncio.to_thread(ws.get_all_records)
+        if idx < 0 or idx >= len(records):
+            await update.message.reply_text("⚠️ Неверный номер.")
+            return
+        await asyncio.to_thread(ws.delete_rows, idx + 2)
+        await update.message.reply_text(f"✅ Удалено: {records[idx]['title']}")
+        return
+
+    # парсим "задача — кто — каждые N дней"
+    import re as _re
+    m = _re.search(r"(.+?)\s*—\s*(.+?)\s*—\s*каждые?\s*(\d+)\s*дн", args, _re.I)
+    if not m:
+        await update.message.reply_text(
+            "Формат: /recurring Обновить прайс — Лена — каждые 14 дней\n"
+            "Список: /recurring list\n"
+            "Удалить: /recurring del 2"
+        )
+        return
+    title, who, days = m.group(1).strip(), m.group(2).strip(), int(m.group(3))
+    next_date = (datetime.datetime.now(TZINFO) + datetime.timedelta(days=days)).strftime("%d.%m.%Y")
+    ws = await asyncio.to_thread(_recurring_ws)
+    if ws is None:
+        await update.message.reply_text("⚠️ Не смог подключиться к таблице.")
+        return
+    await asyncio.to_thread(ws.append_row, [title, who, days, next_date, ""])
+    await update.message.reply_text(
+        f"🔁 Добавлено\n\n{title}\n{who}  ·  каждые {days} дн.  ·  первый раз {next_date}"
+    )
+
+
+async def _check_recurring(context: ContextTypes.DEFAULT_TYPE):
+    """Ежедневная проверка повторяющихся задач — создаёт задачи при наступлении даты."""
+    ws = await asyncio.to_thread(_recurring_ws)
+    if ws is None:
+        return
+    records = await asyncio.to_thread(ws.get_all_records)
+    today = datetime.datetime.now(TZINFO)
+    today_str = today.strftime("%d.%m.%Y")
+    for idx, r in enumerate(records):
+        try:
+            next_d = datetime.datetime.strptime(r["next_date"], "%d.%m.%Y")
+        except ValueError:
+            continue
+        if next_d.date() <= today.date():
+            # создаём задачу в таблице
+            date_str = today.strftime("%d.%m.%Y")
+            interval = int(r.get("interval_days", 7))
+            new_next = (today + datetime.timedelta(days=interval)).strftime("%d.%m.%Y")
+            await asyncio.to_thread(
+                append_task_to_sheet, date_str, r["who"], r["title"],
+                new_next, "⚪️ NEW", "",
+            )
+            # обновляем next_date в recurring
+            await asyncio.to_thread(ws.update_cell, idx + 2, 4, new_next)
+            if GROUP_CHAT_ID:
+                await context.bot.send_message(
+                    GROUP_CHAT_ID,
+                    f"🔁 Повторяющаяся задача создана\n\n{r['title']}\n{r['who']}  ·  след. {new_next}",
+                )
+
+
+# ------------------------------------------------------------------
+# Триггерное напоминание (/remind_when)
+# ------------------------------------------------------------------
+_TRIGGERS: dict[int, list[dict]] = {}  # chat_id → [{keyword, reminder, author_id}]
+
+
+async def cmd_remind_when(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/remind_when [ключевое слово] — [что напомнить]"""
+    args = " ".join(context.args).strip()
+    import re as _re
+    m = _re.match(r"(.+?)\s*—\s*(.+)", args)
+    if not m:
+        # показать активные триггеры
+        chat_id = update.effective_chat.id
+        triggers = _TRIGGERS.get(chat_id, [])
+        if not triggers:
+            await update.message.reply_text(
+                "Активных триггеров нет.\n\n"
+                "Добавить: /remind_when поставка — уточнить цену у поставщика"
+            )
+        else:
+            lines = ["🔔 Активные триггеры", ""]
+            for i, t in enumerate(triggers, 1):
+                lines.append(f"{i}. Когда «{t['keyword']}» → {t['reminder']}")
+            await update.message.reply_text("\n".join(lines))
+        return
+    keyword, reminder = m.group(1).strip().lower(), m.group(2).strip()
+    chat_id = update.effective_chat.id
+    _TRIGGERS.setdefault(chat_id, []).append({
+        "keyword": keyword,
+        "reminder": reminder,
+        "author_id": update.effective_user.id,
+    })
+    await update.message.reply_text(
+        f"🔔 Триггер установлен\n\n"
+        f"Когда в чате появится «{keyword}» — напомню:\n{reminder}"
+    )
+
+
+async def _check_triggers(chat_id: int, text: str, bot) -> None:
+    """Вызывается из on_log_message — проверяет триггеры."""
+    triggers = _TRIGGERS.get(chat_id, [])
+    if not triggers:
+        return
+    text_lower = text.lower()
+    fired = []
+    remaining = []
+    for t in triggers:
+        if t["keyword"] in text_lower:
+            fired.append(t)
+        else:
+            remaining.append(t)
+    _TRIGGERS[chat_id] = remaining
+    for t in fired:
+        try:
+            await bot.send_message(
+                chat_id,
+                f"🔔 Триггер сработал!\n\nВ чате упомянули «{t['keyword']}»\n\n→ {t['reminder']}"
+            )
+        except Exception as e:
+            logger.error("trigger notify: %s", e)
+
+
 async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/strategy — стратегический анализ «что делать дальше» на самой мощной модели с thinking."""
     msg = update.effective_message
@@ -3119,6 +3575,11 @@ async def _set_commands(app):
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
+            BotCommand("q", "Быстро сохранить идею в базу знаний"),
+            BotCommand("dash", "Сводка: задачи, просрочены, KB"),
+            BotCommand("post", "Черновик поста для соцсетей"),
+            BotCommand("recurring", "Повторяющиеся задачи"),
+            BotCommand("remind_when", "Триггерное напоминание"),
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
             BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
             BotCommand("pin", "Интерактивное описание группы с навигацией"),
@@ -3203,6 +3664,13 @@ def main():
     app.add_handler(CommandHandler("ai", cmd_ai_check))
     app.add_handler(CommandHandler("purge", cmd_purge))
     app.add_handler(CallbackQueryHandler(on_purge_confirm, pattern="^purge::"))
+    app.add_handler(CommandHandler("q", cmd_quick_idea))
+    app.add_handler(CommandHandler("dash", cmd_dash))
+    app.add_handler(CommandHandler("post", cmd_post))
+    app.add_handler(CommandHandler("recurring", cmd_recurring))
+    app.add_handler(CommandHandler("remind_when", cmd_remind_when))
+    app.add_handler(CallbackQueryHandler(on_alert_action, pattern="^alert::"))
+    app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
     app.add_handler(CommandHandler("pin", cmd_pin))
     app.add_handler(CallbackQueryHandler(on_pin_nav, pattern="^pin::"))
@@ -3238,6 +3706,17 @@ def main():
         app.job_queue.run_daily(
             send_deadline_alerts,
             time=datetime.time(hour=ALERT_HOUR, minute=ALERT_MINUTE, tzinfo=TZINFO),
+        )
+        # Еженедельный отчёт — пятница 17:00
+        app.job_queue.run_daily(
+            send_weekly_report,
+            time=datetime.time(hour=17, minute=0, tzinfo=TZINFO),
+            days=(4,),  # 4 = пятница
+        )
+        # Проверка повторяющихся задач — каждый день в 09:00
+        app.job_queue.run_daily(
+            _check_recurring,
+            time=datetime.time(hour=9, minute=0, tzinfo=TZINFO),
         )
         logger.info(
             "Запланировано: дайджест %02d:%02d, алерты %02d:%02d (%s)",
