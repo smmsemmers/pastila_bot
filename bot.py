@@ -2965,14 +2965,14 @@ _DEEP_PROMPT = (
 
 
 async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/deep — глубокий анализ всего: задачи + KB + переписка → проблемы + план."""
+    """/deep — двухэтапный анализ: Perplexity ищет в интернете, Opus синтезирует с внутренними данными."""
     msg = update.effective_message
     wait = await msg.reply_text(
         "🔬 Запускаю глубокий анализ…\n"
-        "Читаю задачи, базу знаний, переписку. Займёт 60–90 сек."
+        "Займёт 2–3 минуты: сначала веб-исследование, потом синтез."
     )
     try:
-        # Читаем все открытые задачи
+        # ── Этап 0: читаем внутренние данные ──
         try:
             groups = await asyncio.to_thread(read_open_tasks)
             task_lines = []
@@ -2983,34 +2983,65 @@ async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
             tasks_ctx = "\n".join(task_lines) if task_lines else "Открытых задач нет."
         except Exception:
+            task_lines = []
             tasks_ctx = "(задачи недоступны)"
 
-        # База знаний
-        kb_ctx = _kb_context(max_chars_per_item=600, max_total=5000)
-
-        # Переписка
+        kb_ctx = _kb_context(max_chars_per_item=600, max_total=4000)
         chat_log = _CHAT_LOG.get(msg.chat_id, [])
         log_text = await llm.prepare_context(chat_log, msg.chat_id, task="analyze")
-
         now = datetime.datetime.now(TZINFO)
+
+        # ── Этап 1: Perplexity Deep Research — поиск в интернете ──
+        await wait.edit_text(
+            "🌐 Этап 1/2 — Perplexity исследует рынок и конкурентов…\n(60–90 сек)"
+        )
+        web_research = ""
+        try:
+            web_research = await llm.call_llm(
+                [
+                    {"role": "system", "content": (
+                        "Ты аналитик рынка. Ответь на русском языке. "
+                        "Используй веб-поиск для получения актуальной информации."
+                    )},
+                    {"role": "user", "content": (
+                        "Исследуй рынок белёвской пастилы и натуральных сладостей ручной работы в России (2024–2025):\n"
+                        "1. Ключевые конкуренты — кто продаёт, цены, позиционирование\n"
+                        "2. Тренды: здоровое питание, ремесленные продукты, подарочные наборы\n"
+                        "3. Каналы продаж: маркетплейсы, офлайн, соцсети — что работает лучше\n"
+                        "4. Что аудитория ценит и ищет (отзывы, форумы, соцсети)\n"
+                        "5. Незанятые возможности\n\n"
+                        "Только конкретные факты, цифры, названия. Без воды."
+                    )},
+                ],
+                model_id=llm.MODELS["sonar_deep"]["id"],
+                max_tokens=3000,
+                temperature=0.2,
+                timeout=150,
+            )
+        except Exception as e:
+            logger.warning("Perplexity deep research failed: %s", e)
+            web_research = f"(веб-исследование недоступно: {e})"
+
+        # ── Этап 2: Opus — синтез внешнего + внутреннего ──
+        await wait.edit_text(
+            "🧠 Этап 2/2 — Opus синтезирует всё в стратегический доклад…\n(60–90 сек)"
+        )
         static_ctx = (
             f"Дата анализа: {now:%d.%m.%Y}\n\n"
-            f"=== ОТКРЫТЫЕ ЗАДАЧИ ({len(task_lines) if task_lines else 0}) ===\n{tasks_ctx}\n\n"
+            f"=== ОТКРЫТЫЕ ЗАДАЧИ ({len(task_lines)}) ===\n{tasks_ctx}\n\n"
             f"=== БАЗА ЗНАНИЙ ===\n{kb_ctx or 'Пусто.'}\n\n"
-            f"=== ПЕРЕПИСКА КОМАНДЫ ===\n{log_text or 'Нет данных.'}"
+            f"=== ПЕРЕПИСКА КОМАНДЫ ===\n{log_text or 'Нет данных.'}\n\n"
+            f"=== ВЕБ-ИССЛЕДОВАНИЕ РЫНКА ===\n{web_research}"
         )
-
-        flagship_id = llm.MODELS["opus48"]["id"]
         report = await llm.call_llm(
             [llm.sys_cached(_DEEP_PROMPT),
-             llm.user_with_cache(static_ctx, "Проведи глубокий анализ. Выдай полный доклад.")],
-            model_id=flagship_id,
+             llm.user_with_cache(static_ctx, "Проведи глубокий анализ с учётом данных о рынке. Выдай полный доклад.")],
+            model_id=llm.MODELS["opus48"]["id"],
             max_tokens=5000,
             thinking_budget=12000,
             timeout=210,
         )
 
-        # Разбиваем на части если длинно
         chunks = _chunks(report.strip(), size=4000)
         await wait.edit_text(f"🔬 <b>Глубокий анализ</b>\n\n{chunks[0]}", parse_mode="HTML")
         for ch in chunks[1:]:

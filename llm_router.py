@@ -73,6 +73,10 @@ MODELS = {
     "dsv4flash":   {"id": "deepseek/deepseek-v4-flash",          "label": "DeepSeek V4 Flash",    "in": 0.09,  "out": 0.18,  "tier": "cheap"},
     "qwen35fl":    {"id": "qwen/qwen3.5-flash-02-23",            "label": "Qwen3.5 Flash",        "in": 0.065, "out": 0.26,  "tier": "cheap"},
 
+    # ── 🔍 Веб-исследование (встроенный поиск) ──
+    "sonar_deep":   {"id": "perplexity/sonar-deep-research",        "label": "Perplexity Deep Research", "in": 2.0,   "out": 8.0,   "tier": "balanced"},
+    "sonar_pro":    {"id": "perplexity/sonar-pro",                  "label": "Perplexity Sonar Pro",     "in": 3.0,   "out": 15.0,  "tier": "balanced"},
+
     # ── 🆓 Бесплатные (есть лимиты скорости) ──
     "ossfree":     {"id": "openai/gpt-oss-120b:free",           "label": "GPT-OSS 120B",         "in": 0.0,   "out": 0.0,   "tier": "free"},
     "qwencoderfr": {"id": "qwen/qwen3-coder:free",              "label": "Qwen3 Coder",          "in": 0.0,   "out": 0.0,   "tier": "free"},
