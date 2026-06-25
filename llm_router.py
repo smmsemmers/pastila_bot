@@ -34,6 +34,77 @@ from telegram.ext import CommandHandler, CallbackQueryHandler, ContextTypes
 
 logger = logging.getLogger(__name__)
 
+# ───────────────────── статистика токенов ─────────────────────
+# Хранится в памяти до перезапуска; сбрасывается при рестарте Render.
+# Ключ — model_id, значение — {"calls": int, "in": int, "out": int, "cache_read": int}
+_TOKEN_STATS: dict = {}
+
+
+def _record_usage(model_id: str, usage: dict):
+    """Записать usage из ответа OpenRouter в накопительную статистику."""
+    s = _TOKEN_STATS.setdefault(model_id, {"calls": 0, "in": 0, "out": 0, "cache_read": 0})
+    s["calls"] += 1
+    s["in"] += usage.get("prompt_tokens", 0)
+    s["out"] += usage.get("completion_tokens", 0)
+    # OpenRouter возвращает cache_read_input_tokens при Anthropic prompt caching
+    s["cache_read"] += usage.get("cache_read_input_tokens", 0)
+
+
+def get_token_report() -> str:
+    """Сформировать текстовый отчёт по расходу токенов."""
+    if not _TOKEN_STATS:
+        return "📊 Статистика пуста — ни одного LLM-вызова с момента запуска."
+
+    # Обогащаем данными о ценах
+    rows = []
+    for model_id, s in _TOKEN_STATS.items():
+        # Ищем модель по id
+        meta = next((v for v in MODELS.values() if v["id"] == model_id), None)
+        label = meta["label"] if meta else model_id.split("/")[-1]
+        price_in = meta["in"] if meta else 0
+        price_out = meta["out"] if meta else 0
+        cost_usd = (s["in"] * price_in + s["out"] * price_out) / 1_000_000
+        rows.append({
+            "label": label,
+            "calls": s["calls"],
+            "in": s["in"],
+            "out": s["out"],
+            "cache_read": s["cache_read"],
+            "cost": cost_usd,
+        })
+
+    rows.sort(key=lambda x: x["cost"], reverse=True)
+    total_cost = sum(r["cost"] for r in rows)
+    total_in = sum(r["in"] for r in rows)
+    total_out = sum(r["out"] for r in rows)
+    total_cache = sum(r["cache_read"] for r in rows)
+
+    lines = ["📊 <b>Расход токенов (с последнего запуска)</b>\n"]
+    for r in rows:
+        pct = (r["cost"] / total_cost * 100) if total_cost else 0
+        cache_note = f" · кэш: {r['cache_read']:,}" if r["cache_read"] else ""
+        lines.append(
+            f"<b>{r['label']}</b>\n"
+            f"  {r['calls']} вызовов · вход {r['in']:,} · выход {r['out']:,}{cache_note}\n"
+            f"  ≈ ${r['cost']:.4f} ({pct:.0f}% расходов)"
+        )
+
+    lines.append(
+        f"\n─────────────────────────\n"
+        f"Итого: {total_in + total_out:,} токенов · ≈ <b>${total_cost:.4f}</b>\n"
+        f"Кэш сэкономил: {total_cache:,} входных токенов"
+    )
+
+    # Рекомендация — самая дорогая модель
+    if rows and rows[0]["cost"] > 0.001:
+        top = rows[0]
+        lines.append(
+            f"\n💡 Больше всего тратит <b>{top['label']}</b> ({top['calls']} вызовов). "
+            "Если не нужно глубокое мышление — можно заменить на Sonnet или Haiku."
+        )
+
+    return "\n\n".join(lines)
+
 # ───────────────────────── ключ / эндпоинт ─────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -276,6 +347,8 @@ async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
         r = await client.post(OPENROUTER_URL, headers=headers, json=payload)
         r.raise_for_status()
         data = r.json()
+        if "usage" in data:
+            _record_usage(model_id, data["usage"])
         content = data["choices"][0]["message"]["content"]
         # When thinking is enabled, content is a list of blocks
         if isinstance(content, list):

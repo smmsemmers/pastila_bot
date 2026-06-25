@@ -3478,6 +3478,12 @@ async def _check_triggers(chat_id: int, text: str, bot) -> None:
             logger.error("trigger notify: %s", e)
 
 
+async def cmd_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tokens — статистика расхода токенов и стоимость с момента запуска."""
+    report = llm.get_token_report()
+    await update.effective_message.reply_text(report, parse_mode="HTML")
+
+
 async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/strategy — стратегический анализ «что делать дальше» на самой мощной модели с thinking."""
     msg = update.effective_message
@@ -3780,6 +3786,7 @@ async def _set_commands(app):
             BotCommand("recurring", "Повторяющиеся задачи"),
             BotCommand("remind_when", "Триггерное напоминание"),
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
+            BotCommand("tokens", "Статистика токенов и стоимость вызовов с запуска"),
             BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
             BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
             BotCommand("pin", "Интерактивное описание группы с навигацией"),
@@ -3887,6 +3894,7 @@ def main():
     app.add_handler(CommandHandler("remind_when", cmd_remind_when))
     app.add_handler(CallbackQueryHandler(on_alert_action, pattern="^alert::"))
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
+    app.add_handler(CommandHandler("tokens", cmd_tokens))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
     app.add_handler(CommandHandler("pin", cmd_pin))
