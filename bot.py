@@ -13,6 +13,7 @@ import json
 from zoneinfo import ZoneInfo
 
 import httpx
+import llm_router as llm
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -98,11 +99,48 @@ def get_worksheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    # Ключ сервисного аккаунта кладём в переменную окружения GOOGLE_CREDENTIALS (весь JSON одной строкой)
     creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
     return client.open_by_key(SHEET_ID).worksheet(SHEET_NAME)
+
+
+# ── Персистентность состояния LLM-роутера (отдельная вкладка таблицы) ──
+_LLM_CONFIG_TAB = "llm_config"
+
+
+def _llm_config_ws():
+    """Вкладка для конфига роутера (создаётся при отсутствии)."""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(
+        json.loads(os.environ["GOOGLE_CREDENTIALS"]), scopes=scopes)
+    ss = gspread.authorize(creds).open_by_key(SHEET_ID)
+    try:
+        return ss.worksheet(_LLM_CONFIG_TAB)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(title=_LLM_CONFIG_TAB, rows=2, cols=1)
+        ws.update_acell("A1", "{}")
+        return ws
+
+
+def _load_llm_state():
+    try:
+        raw = _llm_config_ws().acell("A1").value or "{}"
+        llm.import_state(json.loads(raw))
+        logger.info("Состояние LLM-роутера загружено.")
+    except Exception as e:
+        logger.warning("Не удалось загрузить состояние LLM: %s", e)
+
+
+def _save_llm_state():
+    try:
+        _llm_config_ws().update_acell(
+            "A1", json.dumps(llm.export_state(), ensure_ascii=False))
+    except Exception as e:
+        logger.warning("Не удалось сохранить состояние LLM: %s", e)
 
 
 def append_task_to_sheet(date_str, who, task_title, deadline, status, link=""):
@@ -891,20 +929,62 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ГОЛОСОВОЙ ВВОД (#6): голос → Whisper → GPT → черновик задачи
 # ------------------------------------------------------------------
 VOICE_ROUTER_PROMPT = (
-    "Тебе дают расшифровку голосового сообщения и недавнюю переписку команды (Лена, Глеб). "
-    "Определи намерение и верни СТРОГО JSON.\n"
-    "• Если голосовое — это просьба ЗАВЕСТИ/СОЗДАТЬ задачу, поручение, напоминание что-то сделать — "
-    'верни {"type":"task","title":...,"dod":"","who":"","deadline":"","steps":[],"materials":"","tags":[],"status":"NEW"} '
-    "и заполни поля ТОЛЬКО из голосового (переписку для задачи игнорируй). "
-    'who — «Лена»/«Глеб»/«Лена + Глеб»/""; deadline — ДД.ММ или "" (относительные даты считай от сегодня); '
-    "tags — слова без #; status — NEW, если в речи статус не назван.\n"
-    "• Если голосовое — это ВОПРОС или ПОИСК по переписке («найди где…», «что Глеб говорил про…», "
-    "«когда…», «покажи…») — найди ответ В ПЕРЕПИСКЕ и верни "
-    '{"type":"answer","text":"<краткий ответ с цитатами и кто что сказал; если в переписке нет — честно скажи>"}.'
+    "Ты — роутер голосовых команд для Pastila OS (Лена + Глеб, бизнес по пастиле). "
+    "Тебе дают транскрипт голосового. Определи намерение и верни СТРОГО JSON — один из шести.\n\n"
+
+    "1. СОЗДАТЬ ЗАДАЧУ — только если явно просят «поставь задачу», «создай задачу», "
+    "«запиши поручение», «добавь задачу»:\n"
+    '{"type":"task","title":"...","dod":"","who":"","deadline":"","steps":[],"materials":"","tags":[],"status":"NEW"}\n'
+    "who — «Лена»/«Глеб»/«Лена + Глеб»/\"\"; deadline — ДД.ММ или \"\" (относительные от сегодня).\n\n"
+
+    "2. ПОКАЗАТЬ ЗАДАЧИ — «покажи задачи», «что в работе», «список задач», «что у Глеба/Лены»:\n"
+    '{"type":"list","who":"Лена"|"Глеб"|"Лена + Глеб"|""}\n'
+    "who — если спрашивают про конкретного, иначе \"\" (все).\n\n"
+
+    "3. ПЛАН РАБОТЫ — «составь план», «что делать Глебу/Лене», «наш план», «расставь приоритеты в задачах»:\n"
+    '{"type":"plan","who":"Лена"|"Глеб"|"Лена + Глеб","extra":""}\n'
+    "extra — если добавили контекст («к запуску», «на эту неделю» и т.п.).\n\n"
+
+    "4. НАЙТИ ЗАДАЧИ В ПЕРЕПИСКЕ — «найди задачи в чате», «что мы обсуждали сделать», «задачи из переписки»:\n"
+    '{"type":"analyze"}\n\n'
+
+    "5. ДЕДЛАЙНЫ — «что сдавать сегодня/завтра», «дедлайны», «напомни о сроках»:\n"
+    '{"type":"digest"}\n\n'
+
+    "6. ЛЮБОЙ ДРУГОЙ ЗАПРОС — вопрос, анализ, совет, мнение, «кто прав», «что важнее», "
+    "«направление бизнеса», «как лучше», поиск по переписке, и вообще всё что не вошло выше:\n"
+    '{"type":"query","clean_text":"<грамотно переформулированный запрос, исправь ошибки транскрипции>"}\n\n'
+
+    "Если сомневаешься — выбирай query. "
+    "В clean_text — читабельная грамотная формулировка того, что хочет пользователь."
+)
+
+VOICE_ANALYSIS_PROMPT = (
+    "Ты — старший бизнес-аналитик и советник команды Pastila OS "
+    "(производство и продажа белёвской пастилы). "
+    "Участники: Глеб (@foxruso) — контент, коммуникации, стратегия, босс; "
+    "Лена (@elenaisanewleet) — разработка, техника, продукт.\n\n"
+
+    "У тебя есть переписка команды. Ты можешь и должен:\n"
+    "• Анализировать бизнес-ситуацию и давать КОНКРЕТНЫЕ рекомендации с обоснованием\n"
+    "• Определять приоритеты — что важнее всего прямо сейчас и почему\n"
+    "• Честно оценивать чьи-то действия, подход или логику (не лизать, а помогать)\n"
+    "• Выявлять скрытые проблемы, риски, узкие места в переписке\n"
+    "• Находить закономерности, паттерны, повторяющиеся темы\n"
+    "• Давать своё мнение уверенно — тебя именно за это спрашивают\n"
+    "• Искать и цитировать переписку точно (имя: «цитата»)\n"
+    "• Предлагать следующие шаги, если это уместно\n\n"
+
+    "Правила ответа:\n"
+    "— Конкретно и по делу, без воды и вступлений\n"
+    "— Если спрашивают мнение — дай его чётко, с аргументами\n"
+    "— Цитируй переписку когда важно показать источник\n"
+    "— Обычный текст, без markdown-звёздочек\n"
+    "— Если данных не хватает — скажи честно что именно не видно и что стоит уточнить"
 )
 
 
-async def _whisper_transcribe(audio_bytes):
+async def _whisper_transcribe(audio_bytes):  # OpenAI Whisper — только для голоса
     """Распознаёт речь через OpenAI Whisper. Возвращает текст."""
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     files = {"file": ("voice.ogg", audio_bytes, "audio/ogg")}
@@ -918,33 +998,33 @@ async def _whisper_transcribe(audio_bytes):
         return r.json().get("text", "")
 
 
-async def _gpt_voice_route(transcript, chat_log):
-    """По голосовому решает: завести задачу или ответить на вопрос по переписке.
-    Возвращает dict с ключом type: "task" (+поля задачи) или "answer" (+text)."""
+async def _gpt_voice_route(transcript, chat_id):
+    """Роутер: определяет намерение и очищает транскрипт.
+    Возвращает {"type":"task",...} или {"type":"query","clean_text":"..."}."""
     now = datetime.datetime.now(TZINFO)
-    log_text = "\n".join(f"{n}: {t}" for n, t in chat_log[-200:]) or "(переписки пока нет)"
-    user = f"Сегодня {now:%d.%m.%Y}.\n\nГолосовое: {transcript}\n\nПереписка (имя: текст):\n{log_text}"
-    payload = {
-        "model": OPENAI_MODEL,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": VOICE_ROUTER_PROMPT},
-            {"role": "user", "content": user},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=90) as client:
-        r = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers, json=payload,
-        )
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"]
-    return json.loads(content)
+    model_id = llm.model_id_for(chat_id, "voice_route", transcript)
+    content = await llm.call_llm(
+        [{"role": "system", "content": VOICE_ROUTER_PROMPT},
+         {"role": "user", "content": f"Сегодня {now:%d.%m.%Y}.\n\nГолосовое: {transcript}"}],
+        model_id, temperature=0, max_tokens=400,
+        response_format={"type": "json_object"},
+    )
+    return llm.loads_loose(content)
+
+
+async def _gpt_voice_analyze(clean_text, chat_log, chat_id):
+    """Аналитический ответ на произвольный запрос по переписке и контексту бизнеса."""
+    now = datetime.datetime.now(TZINFO)
+    log_text = await llm.prepare_context(chat_log, chat_id, task="voice_route")
+    model_id = llm.model_id_for(chat_id, "voice_route", log_text + " " + clean_text)
+    user = (f"Сегодня {now:%d.%m.%Y}.\n\n"
+            f"Запрос: {clean_text}\n\n"
+            f"Переписка команды (имя: текст):\n{log_text}")
+    return await llm.call_llm(
+        [{"role": "system", "content": VOICE_ANALYSIS_PROMPT},
+         {"role": "user", "content": user}],
+        model_id, temperature=0.3, max_tokens=900,
+    )
 
 
 def _draft_from_parsed(parsed):
@@ -980,11 +1060,16 @@ def _draft_from_parsed(parsed):
 
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Голосовое → распознаём → собираем черновик задачи на подтверждение."""
+    """Голосовое → Whisper → роутер → задача или аналитический ответ."""
     if not OPENAI_API_KEY:
-        return  # фича выключена (нет ключа) — молчим
+        return  # нет Whisper — молчим
+    if not llm.OPENROUTER_API_KEY:
+        await update.message.reply_text(
+            "🔇 Голосовой ввод выключен — не задан OPENROUTER_API_KEY (нужен для разбора)."
+        )
+        return
     msg = update.message
-    status_msg = await msg.reply_text("🎙️ Слушаю и распознаю…")
+    status_msg = await msg.reply_text("🎙️ Распознаю…")
     try:
         tg_file = await msg.voice.get_file()
         audio = await tg_file.download_as_bytearray()
@@ -992,32 +1077,154 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not transcript.strip():
             await status_msg.edit_text("🤔 Не разобрал речь. Попробуй ещё раз или /new.")
             return
-        chat_log = _CHAT_LOG.get(msg.chat_id, [])
-        result = await _gpt_voice_route(transcript, chat_log)
-        # это вопрос/поиск по переписке — отвечаем, задачу не заводим
-        if result.get("type") == "answer":
-            answer = (result.get("text") or "").strip() or "В переписке ничего не нашёл."
-            await status_msg.edit_text(f"🔎 {answer}")
-            return
-        data = _draft_from_parsed(result)
+        result = await _gpt_voice_route(transcript, msg.chat_id)
     except Exception as e:
-        logger.error("Голос: ошибка обработки: %s", e)
-        await status_msg.edit_text("⚠️ Не получилось обработать голосовое. Заведи через /new.")
+        logger.error("Голос: ошибка роутинга: %s", e)
+        await status_msg.edit_text("⚠️ Не получилось обработать голосовое. Попробуй ещё раз.")
         return
 
-    preview = transcript.strip()
-    if len(preview) > 250:
-        preview = preview[:250] + "…"
-    draft = (
-        f"🎙️ Услышал: «{preview}»\n\n— Черновик —\n{build_task_text(data)}\n\n"
-        "🚦 Выбери статус — и задача опубликуется:"
-    )
-    # выбор статуса в конце (как в /new) + отмена
-    rows = [list(row) for row in status_keyboard("voicestatus").inline_keyboard]
-    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="voice::cancel")])
-    sent = await status_msg.edit_text(draft, reply_markup=InlineKeyboardMarkup(rows))
-    # черновик храним в chat_data под id сообщения (переживёт смену пользователя, но не рестарт)
-    context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
+    vtype = result.get("type", "query")
+
+    # ── Показать задачи ──
+    if vtype == "list":
+        await status_msg.edit_text("📋 Читаю таблицу…")
+        try:
+            groups = await asyncio.to_thread(read_open_tasks)
+        except Exception as e:
+            logger.error("Голос/list: %s", e)
+            await status_msg.edit_text("⚠️ Не получилось прочитать таблицу.")
+            return
+        who_filter = result.get("who", "")
+        if who_filter and who_filter in groups:
+            groups = {who_filter: groups[who_filter]}
+        elif who_filter:
+            # попробуем нечёткий матч (Лена + Глеб содержит обоих)
+            groups = {w: t for w, t in groups.items() if _person_match(w, who_filter)}
+        order = {w: i for i, w in enumerate(WHO_OPTIONS)}
+        lines = ["📋 ОТКРЫТЫЕ ЗАДАЧИ" + (f" — {who_filter}" if who_filter else ""), ""]
+        total = 0
+        for who in sorted(groups, key=lambda w: (order.get(w, 99), w)):
+            tasks = groups[who]
+            total += len(tasks)
+            lines.append(f"👤 {who} — {len(tasks)}")
+            for t in tasks:
+                lines.append(f"   {t['status']}  {t['title']}  ·  🗓️ {t['deadline']}")
+            lines.append("")
+        lines.append(f"Итого: {total}" if total else "Открытых задач нет 🎉")
+        await status_msg.edit_text("\n".join(lines).strip())
+        return
+
+    # ── План работы ──
+    if vtype == "plan":
+        who = result.get("who") or "Лена + Глеб"
+        extra = result.get("extra") or ""
+        buf = _CHAT_LOG.get(msg.chat_id, [])
+        transcript_ctx = await llm.prepare_context(buf, msg.chat_id, task="plan")
+        model_id, label, is_auto = llm.resolve_model(msg.chat_id, "plan", transcript_ctx)
+        await status_msg.edit_text(
+            f"🗂 Составляю план для «{who}» ({label}{' · авто' if is_auto else ''})…"
+        )
+        try:
+            plan = (await _gpt_plan(transcript_ctx, extra, model_id)) if who == "Лена + Глеб" \
+                else (await _gpt_plan_person(who, transcript_ctx, model_id))
+        except Exception as e:
+            logger.error("Голос/план: %s", e)
+            await status_msg.edit_text("⚠️ Не получилось составить план. Попробуй позже.")
+            return
+        chunks = _chunks(plan.strip() or "Пусто.")
+        await status_msg.edit_text(chunks[0])
+        for ch in chunks[1:]:
+            await msg.reply_text(ch)
+        return
+
+    # ── Анализ переписки на задачи ──
+    if vtype == "analyze":
+        buf = _CHAT_LOG.get(msg.chat_id, [])
+        if len(buf) < 3:
+            await status_msg.edit_text(
+                "Мало сообщений для анализа — бот видит переписку только с момента запуска."
+            )
+            return
+        transcript_ctx = await llm.prepare_context(buf, msg.chat_id, task="analyze")
+        model_id, label, is_auto = llm.resolve_model(msg.chat_id, "analyze", transcript_ctx)
+        await status_msg.edit_text(
+            f"🧠 Ищу задачи в переписке ({label}{' · авто' if is_auto else ''})…"
+        )
+        try:
+            tasks = await _gpt_analyze(transcript_ctx, model_id)
+        except Exception as e:
+            logger.error("Голос/analyze: %s", e)
+            await status_msg.edit_text("⚠️ Не получилось проанализировать.")
+            return
+        if not tasks:
+            await status_msg.edit_text("Конкретных задач в переписке не нашёл 🤷")
+            return
+        await status_msg.edit_text(
+            f"Нашёл задач: {len(tasks)}. Выбери статус, чтобы завести (или «Пропустить»):"
+        )
+        for parsed in tasks[:5]:
+            data = _draft_from_parsed(parsed)
+            draft = f"— Черновик из переписки —\n{build_task_text(data)}\n\n🚦 Статус:"
+            rows = [list(r) for r in status_keyboard("voicestatus").inline_keyboard]
+            rows.append([InlineKeyboardButton("❌ Пропустить", callback_data="voice::cancel")])
+            sent = await context.bot.send_message(
+                chat_id=msg.chat_id, message_thread_id=msg.message_thread_id,
+                text=draft, reply_markup=InlineKeyboardMarkup(rows),
+            )
+            context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
+        return
+
+    # ── Дедлайны ──
+    if vtype == "digest":
+        await status_msg.edit_text("📅 Смотрю дедлайны…")
+        n = await build_and_send_digest(context.bot)
+        if n == -1:
+            await status_msg.edit_text("⚠️ Не смог прочитать таблицу.")
+        elif n == 0:
+            await status_msg.edit_text("На сегодня дедлайнов нет 🎉")
+        else:
+            await status_msg.edit_text(f"📨 Отправил дайджест в группу. Задач сегодня — {n}.")
+        return
+
+    # ── Создание задачи ──
+    if vtype == "task":
+        try:
+            data = _draft_from_parsed(result)
+        except Exception as e:
+            logger.error("Голос: ошибка разбора задачи: %s", e)
+            await status_msg.edit_text("⚠️ Не смог разобрать задачу. Заведи через /new.")
+            return
+        preview = transcript.strip()
+        preview = preview if len(preview) <= 200 else preview[:200] + "…"
+        draft = (
+            f"🎙️ «{preview}»\n\n— Черновик задачи —\n{build_task_text(data)}\n\n"
+            "🚦 Выбери статус — и задача опубликуется:"
+        )
+        rows = [list(row) for row in status_keyboard("voicestatus").inline_keyboard]
+        rows.append([InlineKeyboardButton("❌ Отмена", callback_data="voice::cancel")])
+        sent = await status_msg.edit_text(draft, reply_markup=InlineKeyboardMarkup(rows))
+        context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
+        return
+
+    # ── Аналитический запрос (query + всё неопознанное) ──
+    clean_text = (result.get("clean_text") or transcript).strip()
+    await status_msg.edit_text(f"🎙️ «{clean_text}»\n\n⏳ Думаю…")
+    try:
+        chat_log = _CHAT_LOG.get(msg.chat_id, [])
+        answer = await _gpt_voice_analyze(clean_text, chat_log, msg.chat_id)
+        answer = answer.strip() or "Не получилось найти ответ."
+    except Exception as e:
+        logger.error("Голос/query: %s", e)
+        await status_msg.edit_text(
+            f"🎙️ «{clean_text}»\n\n⚠️ Не получилось проанализировать. Попробуй позже."
+        )
+        return
+    header = f"🎙️ «{clean_text}»\n\n"
+    full = header + answer
+    if len(full) <= 4000:
+        await status_msg.edit_text(full)
+    else:
+        await status_msg.edit_text(header + answer[:4000 - len(header)].rstrip() + "…")
 
 
 async def on_voice_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1088,33 +1295,24 @@ ANALYZE_SYSTEM_PROMPT = (
 )
 
 
-async def _gpt_analyze(transcript):
+async def _gpt_analyze(transcript, model_id):
     """Просит модель найти задачи в переписке. Возвращает список dict."""
     now = datetime.datetime.now(TZINFO)
     user = f"Сегодня {now:%d.%m.%Y}. Переписка (имя: текст):\n{transcript}"
-    payload = {
-        "model": OPENAI_MODEL,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
-            {"role": "user", "content": user},
-        ],
-    }
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(
-            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-        )
-        r.raise_for_status()
-        obj = json.loads(r.json()["choices"][0]["message"]["content"])
+    content = await llm.call_llm(
+        [{"role": "system", "content": ANALYZE_SYSTEM_PROMPT},
+         {"role": "user", "content": user}],
+        model_id, temperature=0, max_tokens=900,
+        response_format={"type": "json_object"},
+    )
+    obj = llm.loads_loose(content)
     return obj.get("tasks", []) if isinstance(obj, dict) else []
 
 
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/analyze — разобрать накопленную переписку и предложить задачи."""
-    if not OPENAI_API_KEY:
-        await update.message.reply_text("🔇 Анализ выключен — не задан OPENAI_API_KEY.")
+    if not llm.OPENROUTER_API_KEY:
+        await update.message.reply_text("🔇 Анализ выключен — не задан OPENROUTER_API_KEY.")
         return
     buf = _CHAT_LOG.get(update.message.chat_id, [])
     if len(buf) < 3:
@@ -1123,10 +1321,21 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "пообщайтесь в чате и вызови /analyze позже."
         )
         return
-    note = await update.message.reply_text("🧠 Анализирую переписку…")
-    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
+    await llm.choose_then_run(update, context, "analyze")
+
+
+async def _run_analyze(update, context, pending):
+    chat_id = update.effective_chat.id
+    thread_id = update.effective_message.message_thread_id
+    buf = _CHAT_LOG.get(chat_id, [])
+    transcript = await llm.prepare_context(buf, chat_id, task="analyze")
+    model_id, label, is_auto = llm.resolve_model(chat_id, "analyze", transcript)
+    note = await context.bot.send_message(
+        chat_id, f"🧠 Анализирую ({label}{' · авто' if is_auto else ''})…",
+        message_thread_id=thread_id,
+    )
     try:
-        tasks = await _gpt_analyze(transcript)
+        tasks = await _gpt_analyze(transcript, model_id)
     except Exception as e:
         logger.error("Анализ переписки: %s", e)
         await note.edit_text("⚠️ Не получилось проанализировать. Попробуй позже.")
@@ -1147,9 +1356,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = [list(r) for r in status_keyboard("voicestatus").inline_keyboard]
         rows.append([InlineKeyboardButton("❌ Пропустить", callback_data="voice::cancel")])
         sent = await context.bot.send_message(
-            chat_id=update.message.chat_id,
-            message_thread_id=update.message.message_thread_id,
-            text=draft,
+            chat_id=chat_id, message_thread_id=thread_id, text=draft,
             reply_markup=InlineKeyboardMarkup(rows),
         )
         context.chat_data.setdefault("voice_drafts", {})[sent.message_id] = data
@@ -1170,48 +1377,47 @@ PLAN_SYSTEM_PROMPT = (
 )
 
 
-async def _gpt_plan(transcript, extra=""):
+async def _gpt_plan(transcript, extra, model_id):
     """Просит модель составить план работы для Лены и Глеба. Возвращает текст."""
     now = datetime.datetime.now(TZINFO)
     parts = [f"Сегодня {now:%d.%m.%Y}."]
     if extra:
         parts.append(f"Дополнительный контекст: {extra}")
     parts.append(f"Переписка (имя: текст):\n{transcript}")
-    payload = {
-        "model": OPENAI_MODEL,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": PLAN_SYSTEM_PROMPT},
-            {"role": "user", "content": "\n\n".join(parts)},
-        ],
-    }
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(
-            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-        )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+    return await llm.call_llm(
+        [{"role": "system", "content": PLAN_SYSTEM_PROMPT},
+         {"role": "user", "content": "\n\n".join(parts)}],
+        model_id, temperature=0.2, max_tokens=1500,
+    )
 
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/plan — план работы для Лены и Глеба по переписке (+ необязательный текст после команды)."""
-    if not OPENAI_API_KEY:
-        await update.message.reply_text("🔇 Планировщик выключен — не задан OPENAI_API_KEY.")
+    if not llm.OPENROUTER_API_KEY:
+        await update.message.reply_text("🔇 Планировщик выключен — не задан OPENROUTER_API_KEY.")
         return
     extra = " ".join(context.args) if context.args else ""
     buf = _CHAT_LOG.get(update.message.chat_id, [])
     if len(buf) < 3 and not extra:
         await update.message.reply_text(
-            "Маловато данных. Я вижу переписку только с момента запуска — пообщайтесь и вызови "
-            "/plan позже, либо добавь контекст после команды, например: "
-            "/plan что нужно успеть к запуску."
+            "Маловато данных. Пообщайтесь и вызови /plan позже, либо добавь контекст "
+            "после команды, например: /plan что нужно успеть к запуску."
         )
         return
-    note = await update.message.reply_text("🗂 Составляю план…")
-    transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
+    await llm.choose_then_run(update, context, "plan", pending={"extra": extra})
+
+
+async def _run_plan(update, context, pending):
+    chat_id = update.effective_chat.id
+    extra = pending.get("extra", "")
+    buf = _CHAT_LOG.get(chat_id, [])
+    transcript = await llm.prepare_context(buf, chat_id, task="plan")
+    model_id, label, is_auto = llm.resolve_model(chat_id, "plan", transcript + " " + extra)
+    note = await context.bot.send_message(
+        chat_id, f"🗂 Составляю план ({label}{' · авто' if is_auto else ''})…",
+    )
     try:
-        plan = await _gpt_plan(transcript, extra)
+        plan = await _gpt_plan(transcript, extra, model_id)
     except Exception as e:
         logger.error("План: %s", e)
         await note.edit_text("⚠️ Не получилось составить план. Попробуй позже.")
@@ -1219,7 +1425,7 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chunks = _chunks(plan.strip() or "Пусто.")
     await note.edit_text(chunks[0])
     for ch in chunks[1:]:
-        await update.message.reply_text(ch)
+        await context.bot.send_message(chat_id, ch)
 
 
 def _flatten_text(t):
@@ -1295,49 +1501,46 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_ai_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/ai — проверка связи с GPT (OpenAI): ключ, модель, доступ.
-    Помогает понять, почему не работают голос, /analyze и /plan."""
+    """/ai — проверка ключей: OpenAI (Whisper) и OpenRouter (LLM-функции)."""
+    lines = []
+    # 1) OpenAI → только Whisper (голосовое распознавание)
     if not OPENAI_API_KEY:
-        await update.message.reply_text(
-            "🔇 OPENAI_API_KEY не задан — голос, /analyze и /plan выключены.\n"
-            "Добавь ключ в Render → Environment, чтобы включить."
-        )
-        return
-    note = await update.message.reply_text("🔌 Проверяю связь с GPT…")
-    payload = {
-        "model": OPENAI_MODEL, "max_tokens": 5,
-        "messages": [{"role": "user", "content": "ping"}],
-    }
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-            )
-    except Exception as e:
-        await note.edit_text(f"⚠️ Не достучался до OpenAI (сеть): {e}")
-        return
-    if r.status_code == 200:
-        await note.edit_text(
-            f"✅ GPT на связи. Модель: {OPENAI_MODEL}.\nГолос, /analyze и /plan работают."
-        )
-        return
-    try:
-        err = r.json().get("error", {}).get("message", "") or r.text[:300]
-    except Exception:
-        err = r.text[:300]
-    hints = {
-        401: "Ключ неверный или с лишними пробелами. Проверь OPENAI_API_KEY (должен начинаться с «sk-»).",
-        429: "Нет квоты/оплаты на аккаунте OpenAI. Зайди на platform.openai.com → Billing и "
-             "добавь способ оплаты или кредиты.",
-        404: f"Модель «{OPENAI_MODEL}» недоступна для этого ключа. Поставь OPENAI_MODEL = gpt-4o-mini.",
-        403: "Доступ запрещён — возможно, модель или регион недоступны для ключа.",
-    }
-    hint = hints.get(r.status_code, "")
-    await note.edit_text(
-        f"❌ GPT недоступен (HTTP {r.status_code}).\n{err}".strip()
-        + (f"\n\n💡 {hint}" if hint else "")
-    )
+        lines.append("🔇 OPENAI_API_KEY не задан — голосовой ввод выключен.")
+    else:
+        note = await update.message.reply_text("🔌 Проверяю OpenAI (Whisper)…")
+        payload = {
+            "model": OPENAI_MODEL, "max_tokens": 5,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(
+                    "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+                )
+            if r.status_code == 200:
+                lines.append("✅ OpenAI на связи — голосовое распознавание (Whisper) работает.")
+            else:
+                try:
+                    err = r.json().get("error", {}).get("message", "") or r.text[:200]
+                except Exception:
+                    err = r.text[:200]
+                hints = {
+                    401: "Ключ неверный. Проверь OPENAI_API_KEY.",
+                    429: "Нет квоты. Зайди в Billing на platform.openai.com.",
+                    404: f"Модель «{OPENAI_MODEL}» недоступна для ключа.",
+                }
+                hint = hints.get(r.status_code, "")
+                lines.append(f"❌ OpenAI: HTTP {r.status_code}. {err}" + (f" {hint}" if hint else ""))
+        except Exception as e:
+            lines.append(f"⚠️ OpenAI недоступен (сеть): {e}")
+        await note.delete()
+    # 2) OpenRouter → /analyze, /plan, /model и разбор голоса
+    if not llm.OPENROUTER_API_KEY:
+        lines.append("🔇 OPENROUTER_API_KEY не задан — /analyze, /plan, /model и разбор голоса выключены.")
+    else:
+        lines.append(f"✅ OPENROUTER_API_KEY задан — LLM-функции работают через OpenRouter.")
+    await update.message.reply_text("\n".join(lines) or "Всё настроено.")
 
 
 # Приветствие-пояснение: показывается на /start и /help. HTML — для жирных заголовков.
@@ -1669,10 +1872,10 @@ def _format_priority_for(person, groups):
     return "\n".join(lines)
 
 
-async def _gpt_plan_person(person, transcript):
+async def _gpt_plan_person(person, transcript, model_id):
     """План работы только для одного человека (для кнопки меню)."""
     now = datetime.datetime.now(TZINFO)
-    sys = (
+    sys_prompt = (
         "Ты — ассистент-планировщик небольшой команды (Лена и Глеб), проект Pastila OS. "
         f"На основе переписки составь КОНКРЕТНЫЙ план работы ТОЛЬКО для: {person}. "
         "По пунктам, по приоритету (сначала важное), кратко, без воды; сроки — если "
@@ -1680,18 +1883,11 @@ async def _gpt_plan_person(person, transcript):
         "Если задач для этого человека нет — так и напиши."
     )
     user = f"Сегодня {now:%d.%m.%Y}.\nПереписка (имя: текст):\n{transcript}"
-    payload = {
-        "model": OPENAI_MODEL, "temperature": 0.2,
-        "messages": [{"role": "system", "content": sys},
-                     {"role": "user", "content": user}],
-    }
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(
-            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-        )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+    return await llm.call_llm(
+        [{"role": "system", "content": sys_prompt},
+         {"role": "user", "content": user}],
+        model_id, temperature=0.2, max_tokens=1500,
+    )
 
 
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1723,24 +1919,26 @@ async def _run_menu_action(query, context, action, person):
         return
 
     if action == "plan":
-        if not OPENAI_API_KEY:
+        if not llm.OPENROUTER_API_KEY:
             await query.edit_message_text(
-                "🔇 Планировщик выключен — не задан OPENAI_API_KEY.", reply_markup=back
+                "🔇 Планировщик выключен — не задан OPENROUTER_API_KEY.", reply_markup=back
             )
             return
-        await query.edit_message_text(f"🗂 Собираю план для «{person}»…")
         buf = _CHAT_LOG.get(chat_id, [])
-        transcript = "\n".join(f"{n}: {t}" for n, t in buf[-500:])
+        transcript = await llm.prepare_context(buf, chat_id, task="plan")
+        model_id, label, is_auto = llm.resolve_model(chat_id, "plan", transcript)
+        await query.edit_message_text(
+            f"🗂 Собираю план для «{person}» ({label}{' · авто' if is_auto else ''})…"
+        )
         try:
-            plan = (await _gpt_plan(transcript)) if person == "Лена + Глеб" \
-                else (await _gpt_plan_person(person, transcript))
+            plan = (await _gpt_plan(transcript, "", model_id)) if person == "Лена + Глеб" \
+                else (await _gpt_plan_person(person, transcript, model_id))
         except Exception as e:
             logger.error("Меню/план: %s", e)
             await query.edit_message_text("⚠️ Не получилось составить план.", reply_markup=back)
             return
         for ch in _chunks(plan.strip() or "Пусто."):
             await query.message.reply_text(ch)
-        # возвращаем меню на место, чтобы можно было сделать ещё действие
         await query.edit_message_text(
             MENU_TEXT, parse_mode="HTML", reply_markup=menu_home_keyboard()
         )
@@ -1800,12 +1998,13 @@ async def _set_commands(app):
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
-            BotCommand("ai", "Проверить связь с GPT"),
+            BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
             BotCommand("id", "ID этого чата"),
             BotCommand("cancel", "Отменить создание задачи"),
             BotCommand("start", "Что умеет бот"),
             BotCommand("help", "Что умеет бот"),
         ]
+        + llm.COMMANDS
     )
 
 
@@ -1908,6 +2107,12 @@ def main():
             "JobQueue недоступен — дайджест и алерты не запланированы. Установи extra: "
             "python-telegram-bot[job-queue]"
         )
+
+    _load_llm_state()
+    llm.set_persistence(lambda: asyncio.to_thread(_save_llm_state))
+    llm.register(app)
+    llm.register_runner("analyze", _run_analyze)
+    llm.register_runner("plan", _run_plan)
 
     logger.info("Бот запущен.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

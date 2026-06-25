@@ -41,10 +41,22 @@ services:
         value: "12"
       - key: ALERT_MINUTE
         value: "0"
-      # Голосовой ввод (Whisper + GPT). Без ключа фича просто выключена.
+      # Распознавание речи (Whisper). Без ключа голосовой ввод просто выключен.
+      # ТОЛЬКО для Whisper — текстовые функции идут через OpenRouter ниже.
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_MODEL
         value: "gpt-4o-mini"
       - key: WHISPER_MODEL
         value: "whisper-1"
+      # ── LLM-роутер (OpenRouter): /analyze, /plan, /model, /trim, разбор голоса ──
+      # Обязателен для текстовых LLM-функций. Ключ на openrouter.ai.
+      # Без него /analyze, /plan, /model и разбор голоса выключены (бот не падает).
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: TRIM_LEVEL
+        value: "4"
+      - key: CONTEXT_MODE
+        value: "truncate"
+      - key: SQUEEZE_MODEL
+        value: "sonnet46"

@@ -115,6 +115,13 @@
 ### 8. TAG_LENA / TAG_GLEB
 Уже прописаны по умолчанию: `@elenaisanewleet` и `@foxruso`.
 
+### 9. OPENROUTER_API_KEY (для /analyze, /plan, /model и разбора голоса)
+Ключ с [openrouter.ai](https://openrouter.ai): зарегистрируйся → Keys → Create Key → пополни баланс.
+Один ключ открывает 30+ моделей. Без него текстовые LLM-функции просто выключены (бот работает).
+Необязательные при этом: `TRIM_LEVEL` (`4`), `CONTEXT_MODE` (`truncate`), `SQUEEZE_MODEL` (`sonnet46`).
+
+`OPENAI_API_KEY` остаётся нужен **только** для распознавания речи (Whisper) — это отдельная фича.
+
 ---
 
 ## Деплой на Render
@@ -124,7 +131,7 @@
 3. Подключи репозиторий
 4. Build Command: `pip install -r requirements.txt`
 5. Start Command: `python bot.py`
-6. В разделе **Environment** добавь все 8 переменных выше
+6. В разделе **Environment** добавь переменные выше
    (GOOGLE_CREDENTIALS — весь JSON одной строкой)
 7. Deploy
 
