@@ -2600,6 +2600,285 @@ async def on_help_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ------------------------------------------------------------------
+# ИНТЕРАКТИВНОЕ ОПИСАНИЕ ГРУППЫ (/pin)
+# ------------------------------------------------------------------
+_SHEET_URL = (
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit"
+    if SHEET_ID else "https://docs.google.com/spreadsheets"
+)
+
+PIN_MAIN_TEXT = (
+    "🍬 <b>Pastila OS — рабочее пространство команды</b>\n\n"
+    "Здесь живёт всё: задачи, решения, база знаний и ИИ-помощник.\n"
+    "Два бота, одна таблица — всё под рукой.\n\n"
+    "👥 <b>Глеб</b> @foxruso — контент, коммуникации, стратегия, шеф\n"
+    "👩‍💻 <b>Лена</b> @elenaisanewleet — разработка, техника, продукт\n\n"
+    f'📊 <a href="{_SHEET_URL}">Google Sheets — таблица задач</a>\n\n'
+    "Выберите раздел ↓"
+)
+
+PIN_SECTIONS = {
+    "tasks": (
+        "📋 Задачи",
+        "<b>📋 Как работают задачи</b>\n\n"
+        "<b>3 способа создать задачу:</b>\n\n"
+        "1️⃣ <code>/new</code> — диалог по шагам:\n"
+        "   название → критерий готовности (DoD) → кто (Лена / Глеб / оба) → дедлайн → "
+        "шаги → материалы → теги → статус\n"
+        "   Любой шаг можно пропустить командой /skip\n\n"
+        "2️⃣ <b>Голосом</b> — запишите поручение, бот сам оформит задачу\n\n"
+        "3️⃣ <code>/analyze</code> — бот прочитает переписку и предложит задачи из обсуждения\n\n"
+        "<b>Что происходит после создания:</b>\n"
+        "• Карточка задачи публикуется в чат\n"
+        "• Под карточкой — кнопки статуса в один тап\n"
+        "• Строка автоматически добавляется в Google Sheets\n"
+        "• При смене статуса — таблица обновляется\n\n"
+        "<b>Статусы:</b>\n"
+        "⚪️ NEW · 🟡 TODO · 🔵 WIP · 🟠 WAITING · 🟣 REVIEW · 🟢 DONE · 🔴 BLOCKED · ⚫️ CANCELLED\n\n"
+        "<b>Полезные команды:</b>\n"
+        "<code>/list</code> — открытые задачи по людям\n"
+        "<code>/status</code> — сменить статус (ответом на карточку задачи)\n"
+        "<code>/purge</code> — очистить всю таблицу (с подтверждением)",
+    ),
+    "voice": (
+        "🎙 Голос",
+        "<b>🎙 Голосовое управление</b>\n\n"
+        "Просто запишите голосовое — бот поймёт, что вы хотите:\n\n"
+        "<b>📌 Создать задачу:</b>\n"
+        "<i>«поставь задачу Лене — сделать лендинг к 25 июля»</i>\n"
+        "<i>«напомни Глебу про ответ клиенту»</i>\n\n"
+        "<b>📋 Список и статусы:</b>\n"
+        "<i>«покажи задачи Глеба»</i>\n"
+        "<i>«что сейчас в работе»</i>\n\n"
+        "<b>🗂 Планирование:</b>\n"
+        "<i>«составь план на неделю»</i>\n"
+        "<i>«что самое важное сейчас»</i> → приоритеты с обоснованием\n\n"
+        "<b>🔍 Поиск по истории:</b>\n"
+        "<i>«найди, где договаривались про оплату»</i>\n"
+        "<i>«кто говорил про поставщика»</i>\n\n"
+        "<b>🤔 Анализ и советы:</b>\n"
+        "<i>«Глеб прав в этом решении?»</i> → честный анализ\n"
+        "<i>«куда развивать бизнес»</i> → стратегический совет\n"
+        "<i>«разбери этот конфликт»</i> → взвешенный взгляд\n\n"
+        "Бот сам определяет намерение — задача, вопрос или план.",
+    ),
+    "kb": (
+        "📚 База знаний",
+        "<b>📚 База знаний — всё важное под рукой</b>\n\n"
+        "Группа работает как умное хранилище: бот читает всё, что вы присылаете.\n\n"
+        "<b>📎 Файлы (автоматически):</b>\n"
+        "Просто кидайте в чат — бот сам прочитает и сохранит:\n"
+        "• PDF — извлекает текст\n"
+        "• DOCX — полное содержимое\n"
+        "• Фото, схемы, скриншоты — описывает через vision-ИИ\n"
+        "• Аудио — транскрибирует через Whisper\n"
+        "После загрузки бот присылает краткое саммари (3–5 предложений)\n\n"
+        "<b>💬 Сессии Claude / ChatGPT:</b>\n"
+        "<code>/session Название</code> → вставьте текст диалога → бот сохранит и сделает саммари\n"
+        "Или: экспортируйте страницу Claude в PDF и кидайте прямо в чат\n\n"
+        "<b>🔗 Notion:</b>\n"
+        "<code>/notion sync</code> — подтягивает страницы из Notion в базу\n\n"
+        "<b>🔍 Поиск:</b>\n"
+        "<code>/find стратегия</code> — поиск по ключевому слову\n"
+        "<code>/find #идея</code> — поиск по тегу\n"
+        "<code>/kb</code> — весь список базы знаний\n\n"
+        "<b>⭐ Детектор важных мыслей:</b>\n"
+        "Бот читает переписку и сам замечает ценные идеи →\n"
+        "ставит ⭐ реакцию + сохраняет с тегами в базу знаний\n"
+        "Теги: #идея #решение #стратегия #риск #клиенты #продукт #финансы #процесс",
+    ),
+    "ai": (
+        "🤖 ИИ-анализ",
+        "<b>🤖 ИИ-анализ и планирование</b>\n\n"
+        "<b>Команды анализа:</b>\n"
+        "<code>/analyze</code> — находит задачи в переписке, предлагает создать их\n"
+        "<code>/plan</code> — конкретный план для Лены и Глеба по приоритетам и срокам\n"
+        "<code>/menu</code> — быстрое меню: приоритеты · план · статусы\n\n"
+        "<b>База знаний в контексте:</b>\n"
+        "Бот автоматически включает базу знаний в запросы к ИИ —\n"
+        "так ответы учитывают все загруженные материалы и прошлые решения\n\n"
+        "<b>30+ моделей на выбор:</b>\n"
+        "<code>/model</code> — сменить модель для текущего типа задачи\n"
+        "<code>/trim</code> — настроить уровень сжатия контекста (1–5)\n\n"
+        "<b>Доступные модели (OpenRouter):</b>\n"
+        "• Быстрые/дешёвые: Haiku 4.5, Gemini Flash\n"
+        "• Умные: Sonnet 4.5, GPT-4o, Gemini Pro\n"
+        "• Топ: Opus 4, GPT-4.5, Gemini Ultra\n\n"
+        "<b>Авто-режим:</b> бот сам выбирает модель по сложности запроса\n\n"
+        "<code>/ai</code> — проверить соединение с OpenAI / OpenRouter",
+    ),
+    "alerts": (
+        "⏰ Дедлайны",
+        "<b>⏰ Дедлайны и напоминания</b>\n\n"
+        "Бот следит за сроками сам — вам не нужно помнить:\n\n"
+        "<b>Автоматически каждый день в 12:00 МСК:</b>\n"
+        "• <code>/digest</code> — дедлайны на сегодня (кому и что)\n"
+        "• <code>/alerts</code> — предупреждение: что горит завтра\n\n"
+        "<b>Проверить вручную в любой момент:</b>\n"
+        "<code>/digest</code> — посмотреть на сегодня\n"
+        "<code>/alerts</code> — посмотреть на завтра\n\n"
+        "<b>Формат карточки дедлайна:</b>\n"
+        "Кому → Задача → Срок\n"
+        "Если задача просрочена — бот это тоже покажет\n\n"
+        "<b>Настройка времени (в render.yaml):</b>\n"
+        "DIGEST_HOUR=12 · DIGEST_MINUTE=0\n"
+        "ALERT_HOUR=12 · ALERT_MINUTE=0\n"
+        "TZ=Europe/Moscow",
+    ),
+    "commands": (
+        "⚙️ Все команды",
+        "<b>⚙️ Полный список команд</b>\n\n"
+        "<b>Задачи:</b>\n"
+        "<code>/new</code> — создать задачу\n"
+        "<code>/list</code> — открытые задачи\n"
+        "<code>/status</code> — сменить статус (ответом)\n"
+        "<code>/digest</code> — дедлайны на сегодня\n"
+        "<code>/alerts</code> — дедлайны на завтра\n"
+        "<code>/purge</code> — очистить все задачи\n\n"
+        "<b>Анализ и план:</b>\n"
+        "<code>/analyze</code> — найти задачи в переписке\n"
+        "<code>/plan</code> — план для Лены и Глеба\n"
+        "<code>/menu</code> — быстрое меню\n\n"
+        "<b>База знаний:</b>\n"
+        "<code>/session [название]</code> — добавить диалог из Claude/GPT\n"
+        "<code>/find [слово/#тег]</code> — поиск в базе\n"
+        "<code>/kb</code> — список всей базы знаний\n"
+        "<code>/notion sync</code> — синхронизация с Notion\n\n"
+        "<b>Настройки ИИ:</b>\n"
+        "<code>/model</code> — выбрать языковую модель\n"
+        "<code>/trim</code> — настроить сжатие контекста\n"
+        "<code>/ai</code> — проверить соединение\n\n"
+        "<b>Управление:</b>\n"
+        "<code>/start</code> / <code>/help</code> — справка\n"
+        "<code>/welcome</code> — показать баннер бота\n"
+        "<code>/cancel</code> — отменить текущий диалог\n"
+        "<code>/pin</code> — обновить это сообщение",
+    ),
+    "team": (
+        "👥 Команда",
+        "<b>👥 Кто мы и зачем всё это</b>\n\n"
+        "<b>Лена</b> @elenaisanewleet\n"
+        "Разработка, техника, продукт.\n"
+        "Пишет код, строит инфраструктуру, запускает фичи.\n\n"
+        "<b>Глеб</b> @foxruso\n"
+        "Контент, коммуникации, стратегия, шеф.\n"
+        "Клиенты, позиционирование, большая картинка.\n\n"
+        "<b>Наш продукт:</b>\n"
+        "🍬 Белёвская пастила — живой продукт с историей.\n"
+        "Производство, продажи, маркетинг — всё в одних руках.\n\n"
+        "<b>Зачем нам этот бот:</b>\n"
+        "Задачи терялись в переписке → теперь у каждой есть карточка\n"
+        "Решения забывались → теперь есть база знаний\n"
+        "Планирование было хаосом → теперь ИИ помогает расставить приоритеты\n\n"
+        f'📊 <a href="{_SHEET_URL}">Открыть таблицу задач</a>',
+    ),
+}
+
+
+def pin_main_keyboard():
+    keys = list(PIN_SECTIONS)
+    rows = []
+    for i in range(0, len(keys), 2):
+        rows.append([
+            InlineKeyboardButton(PIN_SECTIONS[k][0], callback_data=f"pin::{k}")
+            for k in keys[i:i + 2]
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
+def pin_back_keyboard():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ Главная", callback_data="pin::menu")]]
+    )
+
+
+_STRATEGY_PROMPT = (
+    "Ты — стратегический советник команды Pastila OS (белёвская пастила, Лена + Глеб).\n\n"
+    "О команде:\n"
+    "• Глеб (@foxruso) — контент, коммуникации, стратегия, шеф\n"
+    "• Лена (@elenaisanewleet) — разработка, техника, продукт\n"
+    "Мы производим и продаём белёвскую пастилу. Цель — вырасти в живой бренд с историей.\n\n"
+    "Задача: ответить на вопрос «Что делать дальше, чтобы сдвинуться и построить крутой бизнес?»\n\n"
+    "Учти текущую базу знаний команды (прошлые решения, идеи, материалы) и историю задач.\n"
+    "Дай конкретный, смелый и честный ответ:\n"
+    "1. Где сейчас реальная узкое место (честно, без лести)\n"
+    "2. ТОП-3 действия на ближайшие 2 недели — конкретные, с ответственными (Лена / Глеб)\n"
+    "3. Одна большая идея на горизонте 3 месяцев\n"
+    "4. Что НЕ делать сейчас (стоп-лист)\n\n"
+    "Формат: обычный текст, без лишних оговорок. Говори прямо как партнёр, а не консультант."
+)
+
+
+async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/strategy — стратегический анализ «что делать дальше» на самой мощной модели с thinking."""
+    msg = update.effective_message
+    wait = await msg.reply_text(
+        "🧠 Подключаю Claude Opus 4.8 с расширенным мышлением…\n"
+        "Это займёт 30–60 секунд."
+    )
+    try:
+        kb_ctx = _kb_context(max_chars_per_item=1000, max_total=6000)
+        chat_ctx = "\n".join(
+            f"{m['role'].upper()}: {m['content']}"
+            for m in _CHAT_LOG.get(msg.chat_id, [])[-30:]
+            if m.get("content")
+        )
+        user_content = ""
+        if kb_ctx:
+            user_content += f"=== База знаний ===\n{kb_ctx}\n\n"
+        if chat_ctx:
+            user_content += f"=== Последняя переписка ===\n{chat_ctx}\n\n"
+        user_content += "Вопрос: что делать дальше, чтобы мы продвинулись и сделали крутой бизнес?"
+
+        flagship_id = llm.MODELS["opus48"]["id"]
+        answer = await llm.call_llm(
+            [
+                {"role": "system", "content": _STRATEGY_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            model_id=flagship_id,
+            max_tokens=4000,
+            thinking_budget=8000,
+            timeout=180,
+        )
+        await wait.edit_text(f"🍬 <b>Стратегический совет</b>\n\n{answer}", parse_mode="HTML")
+    except Exception as e:
+        logger.error("cmd_strategy: %s", e)
+        await wait.edit_text(f"⚠️ Ошибка при запросе к модели: {e}")
+
+
+async def cmd_pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/pin — интерактивное описание группы с навигацией по разделам."""
+    await update.message.reply_text(
+        PIN_MAIN_TEXT, parse_mode="HTML",
+        reply_markup=pin_main_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+async def on_pin_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Навигация по разделам /pin."""
+    query = update.callback_query
+    await query.answer()
+    key = query.data.split("::", 1)[1]
+    if key == "menu":
+        await query.edit_message_text(
+            PIN_MAIN_TEXT, parse_mode="HTML",
+            reply_markup=pin_main_keyboard(),
+            disable_web_page_preview=True,
+        )
+        return
+    section = PIN_SECTIONS.get(key)
+    if not section:
+        return
+    await query.edit_message_text(
+        section[1], parse_mode="HTML",
+        reply_markup=pin_back_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+# ------------------------------------------------------------------
 # МЕНЮ ДЕЙСТВИЙ (/menu): выбрал действие → выбрал кого → бот ответил
 # ------------------------------------------------------------------
 MENU_ACTIONS = [
@@ -2829,6 +3108,8 @@ async def _set_commands(app):
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
+            BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
+            BotCommand("pin", "Интерактивное описание группы с навигацией"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
             BotCommand("session", "Добавить сессию/лог в базу знаний"),
             BotCommand("find", "Найти в базе знаний по теме или тегу"),
@@ -2910,6 +3191,9 @@ def main():
     app.add_handler(CommandHandler("ai", cmd_ai_check))
     app.add_handler(CommandHandler("purge", cmd_purge))
     app.add_handler(CallbackQueryHandler(on_purge_confirm, pattern="^purge::"))
+    app.add_handler(CommandHandler("strategy", cmd_strategy))
+    app.add_handler(CommandHandler("pin", cmd_pin))
+    app.add_handler(CallbackQueryHandler(on_pin_nav, pattern="^pin::"))
     app.add_handler(CommandHandler("session", cmd_session))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("notion", cmd_notion_sync))

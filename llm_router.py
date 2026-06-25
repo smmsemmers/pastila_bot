@@ -225,7 +225,7 @@ def model_id_for(chat_id, task, context_text=""):
 
 # ───────────────────────── вызов модели ─────────────────────────
 async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
-                   response_format=None, timeout=120):
+                   response_format=None, timeout=120, thinking_budget=0):
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY не задан")
     payload = {
@@ -236,6 +236,11 @@ async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
     }
     if response_format is not None:
         payload["response_format"] = response_format
+    if thinking_budget > 0:
+        # Extended thinking: Anthropic models via OpenRouter
+        payload["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+        # temperature must be 1 when thinking is enabled
+        payload["temperature"] = 1
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -244,7 +249,13 @@ async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
     async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(OPENROUTER_URL, headers=headers, json=payload)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        content = data["choices"][0]["message"]["content"]
+        # When thinking is enabled, content is a list of blocks
+        if isinstance(content, list):
+            text_parts = [b["text"] for b in content if b.get("type") == "text"]
+            return "\n\n".join(text_parts)
+        return content
 
 
 def loads_loose(text):
