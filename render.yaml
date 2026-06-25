@@ -70,3 +70,7 @@ services:
       # NOTION_PAGES — page_id через запятую; пусто = все страницы интеграции
       - key: NOTION_PAGES
         value: ""
+      # INSIGHT_NOTIFY — true: бот пишет в чат когда находит важную мысль
+      # false: только ⭐-реакция + тихое сохранение в KB
+      - key: INSIGHT_NOTIFY
+        value: "true"

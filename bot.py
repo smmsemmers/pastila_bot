@@ -45,6 +45,7 @@ from telegram import (
     ChatMember,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReactionTypeEmoji,
 )
 from telegram.ext import (
     Application,
@@ -118,6 +119,11 @@ NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
 NOTION_PAGES = [p.strip() for p in os.environ.get("NOTION_PAGES", "").split(",") if p.strip()]
 VISION_MODEL_KEY = os.environ.get("VISION_MODEL", "haiku45")  # модель для описания картинок
 
+# Детектор важных мыслей
+# INSIGHT_NOTIFY=true  → бот пишет короткий комментарий в чат
+# INSIGHT_NOTIFY=false → только ⭐-реакция + тихое сохранение в KB (менее шумно)
+INSIGHT_NOTIFY = os.environ.get("INSIGHT_NOTIFY", "true").lower() in ("1", "true", "yes")
+
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
 # ------------------------------------------------------------------
@@ -172,7 +178,7 @@ def _save_llm_state():
 
 
 _KB_TAB = "_knowledge"
-_KB_HEADERS = ["source", "item_id", "title", "content", "added_at"]
+_KB_HEADERS = ["source", "item_id", "title", "content", "added_at", "tags"]
 
 
 def _knowledge_ws():
@@ -212,36 +218,49 @@ def _load_knowledge():
         logger.error("_load_knowledge: %s", e)
 
 
-def _add_knowledge_item(source: str, item_id: str, title: str, content: str):
+def _add_knowledge_item(source: str, item_id: str, title: str, content: str,
+                        tags: list[str] | None = None):
     """Добавляет элемент в память и в Sheet (если ещё не было)."""
     if item_id in _KNOWLEDGE_IDS:
         return False
     now = datetime.datetime.now(TZINFO).strftime("%Y-%m-%d %H:%M")
+    tags_str = " ".join(f"#{t.lstrip('#')}" for t in (tags or []))
     item = {"source": source, "item_id": item_id, "title": title,
-            "content": content, "added_at": now}
+            "content": content, "added_at": now, "tags": tags_str}
     _KNOWLEDGE.append(item)
     _KNOWLEDGE_IDS.add(item_id)
     try:
         ws = _knowledge_ws()
         if ws:
-            ws.append_row([source, item_id, title, content, now],
+            ws.append_row([source, item_id, title, content, now, tags_str],
                           value_input_option="USER_ENTERED")
     except Exception as e:
         logger.error("_add_knowledge_item (sheet): %s", e)
     return True
 
 
-def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000) -> str:
-    """Форматирует базу знаний для вставки в промпт LLM."""
+def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000,
+                filter_tags: list[str] | None = None) -> str:
+    """Форматирует базу знаний для вставки в промпт LLM. Опционально фильтрует по тегам."""
     if not _KNOWLEDGE:
+        return ""
+    items = _KNOWLEDGE
+    if filter_tags:
+        ft = [t.lower().lstrip("#") for t in filter_tags]
+        items = [i for i in items if any(
+            t in (i.get("tags", "") + " " + i.get("title", "") + " " + i.get("content", "")).lower()
+            for t in ft
+        )]
+    if not items:
         return ""
     parts = []
     total = 0
-    for item in _KNOWLEDGE:
+    for item in items:
         snippet = item["content"][:max_chars_per_item].strip()
         if len(item["content"]) > max_chars_per_item:
             snippet += "…"
-        label = f"[{item['source'].upper()}: {item['title']}]"
+        tags_part = f"  [{item['tags']}]" if item.get("tags") else ""
+        label = f"[{item['source'].upper()}: {item['title']}{tags_part}]"
         block = f"{label}\n{snippet}"
         if total + len(block) > max_total:
             break
@@ -250,6 +269,24 @@ def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000) -> str:
     if not parts:
         return ""
     return "\n\n=== БАЗА ЗНАНИЙ КОМАНДЫ ===\n" + "\n\n".join(parts) + "\n=== КОНЕЦ БЗ ==="
+
+
+def _kb_search(query: str, max_results: int = 5) -> list[dict]:
+    """Простой полнотекстовый поиск по базе знаний."""
+    q = query.lower()
+    words = [w.lstrip("#") for w in q.split() if len(w) > 2]
+    scored = []
+    for item in _KNOWLEDGE:
+        haystack = (
+            item.get("title", "") + " " +
+            item.get("tags", "") + " " +
+            item.get("content", "")
+        ).lower()
+        score = sum(1 for w in words if w in haystack)
+        if score > 0:
+            scored.append((score, item))
+    scored.sort(key=lambda x: -x[0])
+    return [item for _, item in scored[:max_results]]
 
 
 def append_task_to_sheet(date_str, who, task_title, deadline, status, link=""):
@@ -1405,6 +1442,116 @@ async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buf.append((name, msg.text))
     if len(buf) > _LOG_MAX:
         del buf[: len(buf) - _LOG_MAX]
+    # фоновая проверка на важные мысли (не блокирует ответ)
+    asyncio.create_task(
+        _maybe_check_insight(msg.chat_id, msg.message_id, msg.text, context.bot)
+    )
+
+
+# ------------------------------------------------------------------
+# ДЕТЕКТОР ВАЖНЫХ МЫСЛЕЙ — авто-реакция ⭐ + теги + KB
+# ------------------------------------------------------------------
+
+INSIGHT_PROMPT = (
+    "Ты — аналитик команды Pastila OS (белёвская пастила, Лена + Глеб).\n"
+    "Посмотри на последние сообщения. Найди ОДНУ — самую ценную мысль, если она есть.\n\n"
+    "ЧТО ВЫДЕЛЯТЬ:\n"
+    "• стратегическая идея или инсайт про бизнес\n"
+    "• важное решение, влияющее на продукт/процесс/команду\n"
+    "• открытие про клиентов, рынок, конкурентов\n"
+    "• чёткая формулировка ключевой проблемы или возможности\n"
+    "• риск или ограничение которое важно помнить\n\n"
+    "ЧТО НЕ ВЫДЕЛЯТЬ:\n"
+    "• обычная координация («сделай», «ок», «когда будет готово»)\n"
+    "• задачи и поручения (для них есть /new)\n"
+    "• светская беседа\n\n"
+    "Верни СТРОГО JSON:\n"
+    '{"found": false}  — если ничего действительно ценного нет\n'
+    '{"found": true, "author": "имя", "quote": "точная цитата", '
+    '"why": "одно предложение почему важно", '
+    '"tags": ["тег1", "тег2"]}  — до 3 тегов из: идея/решение/стратегия/риск/клиенты/продукт/партнёры/финансы/процесс\n\n'
+    "Будь ИЗБИРАТЕЛЬНЫМ. Если сомневаешься — {\"found\": false}."
+)
+
+_INSIGHT_COUNTER: dict[int, int] = {}   # сообщений с последней проверки
+_INSIGHT_LAST: dict[int, float] = {}    # timestamp последнего найденного инсайта
+_INSIGHT_COOLDOWN = 900.0               # минимум 15 мин между инсайтами на чат
+_INSIGHT_CHECK_EVERY = 7                # проверять каждые N сообщений
+_INSIGHT_MIN_LEN = 90                   # или если сообщение длиннее этого
+
+
+async def _maybe_check_insight(chat_id: int, msg_id: int, msg_text: str, bot) -> None:
+    """Вызывается из on_log_message. Периодически ищет важные мысли в последних сообщениях."""
+    if not llm.OPENROUTER_API_KEY:
+        return
+
+    # счётчик и порог
+    count = _INSIGHT_COUNTER.get(chat_id, 0) + 1
+    _INSIGHT_COUNTER[chat_id] = count
+    long_enough = len(msg_text) >= _INSIGHT_MIN_LEN
+    if not long_enough and count < _INSIGHT_CHECK_EVERY:
+        return
+    _INSIGHT_COUNTER[chat_id] = 0
+
+    # cooldown
+    import time as _time
+    if _time.monotonic() - _INSIGHT_LAST.get(chat_id, 0.0) < _INSIGHT_COOLDOWN:
+        return
+
+    buf = _CHAT_LOG.get(chat_id, [])
+    if len(buf) < 3:
+        return
+
+    recent = buf[-10:]
+    transcript = "\n".join(f"{name}: {text}" for name, text in recent)
+
+    try:
+        raw = await llm.call_llm(
+            [{"role": "system", "content": INSIGHT_PROMPT},
+             {"role": "user", "content": transcript}],
+            "haiku45", temperature=0, max_tokens=250,
+            response_format={"type": "json_object"},
+        )
+        result = llm.loads_loose(raw)
+    except Exception as e:
+        logger.debug("insight check failed: %s", e)
+        return
+
+    if not isinstance(result, dict) or not result.get("found"):
+        return
+
+    import time as _time
+    _INSIGHT_LAST[chat_id] = _time.monotonic()
+
+    author = result.get("author", "")
+    quote = result.get("quote", "").strip()
+    why = result.get("why", "").strip()
+    tags = result.get("tags", [])
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    if not quote:
+        return
+
+    # ⭐ реакция на последнее сообщение
+    try:
+        await bot.set_message_reaction(chat_id, msg_id, [ReactionTypeEmoji(emoji="⭐")])
+    except Exception:
+        pass
+
+    # сохранить в KB
+    item_id = f"insight_{hashlib.md5(quote.encode()).hexdigest()[:12]}"
+    full_title = f"Инсайт [{', '.join(tags) if tags else 'общее'}]: {quote[:60]}"
+    content_kb = f"{author}: «{quote}»\n\nПочему важно: {why}"
+    await asyncio.to_thread(_add_knowledge_item, "insight", item_id, full_title, content_kb, tags)
+
+    # уведомление в чат (если включено)
+    if INSIGHT_NOTIFY:
+        tags_line = "  " + " ".join(f"#{t}" for t in tags) if tags else ""
+        await bot.send_message(
+            chat_id,
+            f"💡 {author}, это важно — сохранила.\n_{why}_{tags_line}",
+        )
 
 
 # ------------------------------------------------------------------
@@ -1456,6 +1603,27 @@ async def _vision_describe(image_bytes: bytes, filename: str = "") -> str:
         return await llm.call_llm(messages, VISION_MODEL_KEY, temperature=0.2, max_tokens=600)
     except Exception as e:
         logger.error("vision_describe: %s", e)
+        return ""
+
+
+async def _summarize_content(content: str, title: str) -> str:
+    """Краткое саммари загруженного документа/сессии через LLM."""
+    if not llm.OPENROUTER_API_KEY or len(content) < 100:
+        return ""
+    try:
+        prompt = (
+            "Дай краткое саммари этого документа в 3-5 предложениях. "
+            "Выдели ключевые идеи, решения или выводы. Только суть, без воды. "
+            "Отвечай по-русски."
+        )
+        snippet = content[:4000]
+        return await llm.call_llm(
+            [{"role": "system", "content": prompt},
+             {"role": "user", "content": f"Документ: «{title}»\n\n{snippet}"}],
+            "haiku45", temperature=0.2, max_tokens=350,
+        )
+    except Exception as e:
+        logger.debug("summarize: %s", e)
         return ""
 
 
@@ -1554,11 +1722,18 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _add_knowledge_item, f"telegram_{label}", item_id, title, content
         )
         if added:
-            snippet = content[:200].replace("\n", " ")
-            await status_msg.edit_text(
-                f"✅ {label} «{title}» добавлен в базу знаний.\n"
-                f"_{snippet}{'…' if len(content) > 200 else ''}_"
-            )
+            summary = await _summarize_content(content, title)
+            if summary:
+                await status_msg.edit_text(
+                    f"✅ {label} «{title}» добавлен в базу знаний.\n\n"
+                    f"📋 Саммари:\n{summary}"
+                )
+            else:
+                snippet = content[:200].replace("\n", " ")
+                await status_msg.edit_text(
+                    f"✅ {label} «{title}» добавлен в базу знаний.\n"
+                    f"_{snippet}{'…' if len(content) > 200 else ''}_"
+                )
         else:
             await status_msg.edit_text(f"📎 «{title}» уже в базе знаний.")
 
@@ -1763,12 +1938,19 @@ async def _handle_session_text(update: Update, context: ContextTypes.DEFAULT_TYP
     full_title = f"Сессия: {title} ({now.strftime('%d.%m.%Y')})"
 
     added = await asyncio.to_thread(_add_knowledge_item, "session", item_id, full_title, content)
-    snippet = content[:300].replace("\n", " ")
     if added:
-        await msg.reply_text(
-            f"✅ Сессия «{title}» ({len(content)} симв.) добавлена в базу знаний.\n"
-            f"_{snippet}{'…' if len(content) > 300 else ''}_"
-        )
+        summary = await _summarize_content(content, title)
+        if summary:
+            await msg.reply_text(
+                f"✅ Сессия «{title}» ({len(content)} симв.) добавлена в базу знаний.\n\n"
+                f"📋 Саммари:\n{summary}"
+            )
+        else:
+            snippet = content[:300].replace("\n", " ")
+            await msg.reply_text(
+                f"✅ Сессия «{title}» ({len(content)} симв.) добавлена в базу знаний.\n"
+                f"_{snippet}…_"
+            )
     else:
         await msg.reply_text(f"📎 Сессия «{title}» уже в базе знаний.")
     return True
@@ -1867,16 +2049,51 @@ async def cmd_knowledge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _KNOWLEDGE:
         await update.message.reply_text(
             "База знаний пуста.\n"
-            "• Закиньте файл (PDF, фото, DOCX, аудио) в чат — бот прочитает автоматически.\n"
-            "• /notion sync — подтянуть страницы из Notion."
+            "• Закиньте файл (PDF, DOCX, фото, аудио, .txt) — прочитаю автоматически.\n"
+            "• /session — добавить лог/сессию текстом или голосом.\n"
+            "• /notion sync — подтянуть страницы из Notion.\n"
+            "• /find [тема] — найти по ключевым словам или тегу."
         )
         return
     lines = [f"📚 База знаний — {len(_KNOWLEDGE)} элементов:\n"]
     for i, item in enumerate(_KNOWLEDGE, 1):
         src = item["source"].replace("telegram_", "").upper()
-        lines.append(f"{i}. [{src}] {item['title']} — {item['added_at'][:10]}")
-    lines.append("\nГолосом или в /analyze и /plan эти материалы учитываются автоматически.")
+        tags = f"  {item['tags']}" if item.get("tags") else ""
+        lines.append(f"{i}. [{src}] {item['title'][:60]} — {item['added_at'][:10]}{tags}")
+    lines.append("\n/find [тема] — поиск. Голосом и в /plan, /analyze всё учитывается.")
     await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_find(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/find [запрос/#тег] — поиск по базе знаний."""
+    query = " ".join(context.args).strip() if context.args else ""
+    if not query:
+        await update.message.reply_text(
+            "Укажи что искать:\n"
+            "/find стратегия\n"
+            "/find #идея\n"
+            "/find Анализ Semers\n\n"
+            "Или голосом: «найди всё про монетизацию»"
+        )
+        return
+
+    if not _KNOWLEDGE:
+        await update.message.reply_text("База знаний пуста.")
+        return
+
+    results = _kb_search(query)
+    if not results:
+        await update.message.reply_text(f"По запросу «{query}» ничего не нашлось в базе знаний.")
+        return
+
+    lines = [f"🔍 По запросу «{query}» — {len(results)} результат(ов):\n"]
+    for item in results:
+        src = item["source"].replace("telegram_", "").upper()
+        tags = f" {item['tags']}" if item.get("tags") else ""
+        snippet = item["content"][:200].replace("\n", " ")
+        lines.append(f"[{src}] {item['title'][:50]}{tags}\n_{snippet}…_\n")
+
+    await update.message.reply_text("\n".join(lines)[:4000])
 
 
 async def cmd_notion_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2563,6 +2780,7 @@ async def _set_commands(app):
             BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
             BotCommand("session", "Добавить сессию/лог в базу знаний"),
+            BotCommand("find", "Найти в базе знаний по теме или тегу"),
             BotCommand("notion", "Синхронизировать Notion → база знаний"),
             BotCommand("kb", "Показать базу знаний"),
             BotCommand("id", "ID этого чата"),
@@ -2640,6 +2858,7 @@ def main():
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("ai", cmd_ai_check))
     app.add_handler(CommandHandler("session", cmd_session))
+    app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("notion", cmd_notion_sync))
     app.add_handler(CommandHandler("kb", cmd_knowledge))
     app.add_handler(CallbackQueryHandler(on_menu, pattern="^menu::"))
