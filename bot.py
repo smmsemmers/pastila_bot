@@ -361,7 +361,9 @@ def read_due_today(today=None):
     MATERIALS,
     TAGS,
     STATUS,
-) = range(8)
+    SESSION_TITLE,
+    SESSION_CONTENT,
+) = range(10)
 
 # Варианты для кнопок
 WHO_OPTIONS = ["Лена", "Глеб", "Лена + Глеб"]
@@ -1172,6 +1174,9 @@ def _draft_from_parsed(parsed):
 
 async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Голосовое → Whisper → роутер → задача или аналитический ответ."""
+    # если ждём аудио-контент сессии — перехватываем
+    if await _handle_session_file(update, context):
+        return
     if not OPENAI_API_KEY:
         return  # нет Whisper — молчим
     if not llm.OPENROUTER_API_KEY:
@@ -1388,9 +1393,12 @@ _KNOWLEDGE_IDS: set[str] = set() # для дедупликации по item_id
 
 
 async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тихо копит текстовые сообщения чата для последующего анализа (/analyze)."""
+    """Тихо копит текстовые сообщения чата. Если ждём сессию — перехватывает."""
     msg = update.message
     if not msg or not msg.text or msg.text.startswith("/"):
+        return
+    # сначала проверяем: ждём ли контент сессии
+    if await _handle_session_text(update, context):
         return
     name = msg.from_user.full_name if msg.from_user else "?"
     buf = _CHAT_LOG.setdefault(msg.chat_id, [])
@@ -1460,6 +1468,9 @@ async def _download_tg_file(bot, file_id: str) -> bytes:
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Авто-обработка файлов/фото в группе → извлечение текста → база знаний."""
+    # если ждём контент сессии — передаём туда
+    if await _handle_session_file(update, context):
+        return
     if not llm.OPENROUTER_API_KEY and not _PDF_OK and not _DOCX_OK:
         return
     msg = update.message
@@ -1703,6 +1714,148 @@ async def _run_plan(update, context, pending):
     await note.edit_text(chunks[0])
     for ch in chunks[1:]:
         await context.bot.send_message(chat_id, ch)
+
+
+# ------------------------------------------------------------------
+# СЕССИИ — /session: добавить текст / файл / голос в базу знаний
+# ------------------------------------------------------------------
+# Двухшаговый флоу без полноценного ConversationHandler:
+#   Шаг 1: /session Название  → бот запоминает название в chat_data
+#   Шаг 2: следующее сообщение (текст / файл / голос) → контент сессии → KB
+# ------------------------------------------------------------------
+
+_SESSION_KEY = "_session_pending"  # ключ в chat_data
+
+
+async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/session [название] — начать запись сессии/встречи/лога в базу знаний."""
+    title = " ".join(context.args).strip() if context.args else ""
+    now = datetime.datetime.now(TZINFO)
+    date_str = now.strftime("%d.%m.%Y")
+    if not title:
+        title = f"Сессия {date_str}"
+    context.chat_data[_SESSION_KEY] = title
+    await update.message.reply_text(
+        f"📝 Готова записать сессию «{title}».\n\n"
+        "Пришли текст, вставь скопированный контент, отправь файл (PDF, DOCX, .txt) "
+        "или голосовое — сохраню в базу знаний.\n\n"
+        "/cancel — отменить."
+    )
+
+
+async def _handle_session_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Если в chat_data есть ожидающая сессия — обрабатывает текст. Возвращает True если обработал."""
+    title = context.chat_data.get(_SESSION_KEY)
+    if not title:
+        return False
+    msg = update.message
+    if not msg or not msg.text or msg.text.startswith("/"):
+        return False
+
+    content = msg.text.strip()
+    if len(content) < 10:
+        await msg.reply_text("Слишком коротко. Пришли содержание сессии.")
+        return True
+
+    context.chat_data.pop(_SESSION_KEY, None)
+    now = datetime.datetime.now(TZINFO)
+    item_id = f"session_{hashlib.md5(f'{title}{now}'.encode()).hexdigest()[:12]}"
+    full_title = f"Сессия: {title} ({now.strftime('%d.%m.%Y')})"
+
+    added = await asyncio.to_thread(_add_knowledge_item, "session", item_id, full_title, content)
+    snippet = content[:300].replace("\n", " ")
+    if added:
+        await msg.reply_text(
+            f"✅ Сессия «{title}» ({len(content)} симв.) добавлена в базу знаний.\n"
+            f"_{snippet}{'…' if len(content) > 300 else ''}_"
+        )
+    else:
+        await msg.reply_text(f"📎 Сессия «{title}» уже в базе знаний.")
+    return True
+
+
+async def _handle_session_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Если ждём сессию — обрабатывает файл/фото/голос как контент сессии."""
+    title = context.chat_data.get(_SESSION_KEY)
+    if not title:
+        return False
+    msg = update.message
+    if not msg:
+        return False
+
+    # голосовое → Whisper
+    if msg.voice:
+        if not OPENAI_API_KEY:
+            return False
+        context.chat_data.pop(_SESSION_KEY, None)
+        status = await msg.reply_text(f"🎙️ Транскрибирую сессию «{title}»…")
+        try:
+            data = await _download_tg_file(context.bot, msg.voice.file_id)
+            content = await _whisper_transcribe(data)
+        except Exception as e:
+            await status.edit_text(f"⚠️ Не смог расшифровать: {e}")
+            return True
+        if not content:
+            await status.edit_text("⚠️ Пустая расшифровка.")
+            return True
+        now = datetime.datetime.now(TZINFO)
+        item_id = f"session_{hashlib.md5(f'{title}{now}'.encode()).hexdigest()[:12]}"
+        full_title = f"Сессия (аудио): {title} ({now.strftime('%d.%m.%Y')})"
+        await asyncio.to_thread(_add_knowledge_item, "session", item_id, full_title, content)
+        await status.edit_text(
+            f"✅ Аудио-сессия «{title}» расшифрована и добавлена в базу знаний.\n"
+            f"_{content[:250].replace(chr(10), ' ')}…_"
+        )
+        return True
+
+    # файл / фото → on_file уже умеет, но нам нужно переопределить title
+    doc = msg.document
+    photo = msg.photo[-1] if msg.photo else None
+    if not doc and not photo:
+        return False
+
+    context.chat_data.pop(_SESSION_KEY, None)
+    filename = (doc.file_name if doc else "photo.jpg") or "file"
+    mime = (doc.mime_type if doc else "image/jpeg") or ""
+    file_id = (doc.file_id if doc else photo.file_id)
+    size = (doc.file_size if doc else photo.file_size) or 0
+
+    if size > 20 * 1024 * 1024:
+        await msg.reply_text("Файл > 20 МБ, Telegram не даёт скачать.")
+        return True
+
+    status = await msg.reply_text(f"📎 Читаю файл для сессии «{title}»…")
+    try:
+        data = await _download_tg_file(context.bot, file_id)
+        content = ""
+        if mime == "application/pdf" or filename.lower().endswith(".pdf"):
+            content = await asyncio.to_thread(_extract_pdf, data)
+        elif filename.lower().endswith(".docx"):
+            content = await asyncio.to_thread(_extract_docx, data)
+        elif mime.startswith("image/"):
+            content = await _vision_describe(data, filename)
+        elif filename.lower().endswith((".txt", ".md", ".csv")):
+            content = data.decode("utf-8", errors="replace")[:6000]
+        else:
+            content = ""
+
+        if not content:
+            await status.edit_text(f"⚠️ Не смог извлечь текст из «{filename}».")
+            return True
+
+        now = datetime.datetime.now(TZINFO)
+        item_id = f"session_{hashlib.md5(f'{title}{filename}{now}'.encode()).hexdigest()[:12]}"
+        full_title = f"Сессия: {title} [{filename}] ({now.strftime('%d.%m.%Y')})"
+        await asyncio.to_thread(_add_knowledge_item, "session", item_id, full_title, content)
+        snippet = content[:300].replace("\n", " ")
+        await status.edit_text(
+            f"✅ Файл для сессии «{title}» добавлен в базу знаний.\n"
+            f"_{snippet}{'…' if len(content) > 300 else ''}_"
+        )
+    except Exception as e:
+        logger.error("_handle_session_file: %s", e)
+        await status.edit_text(f"⚠️ Ошибка: {e}")
+    return True
 
 
 # ------------------------------------------------------------------
@@ -2409,6 +2562,7 @@ async def _set_commands(app):
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
+            BotCommand("session", "Добавить сессию/лог в базу знаний"),
             BotCommand("notion", "Синхронизировать Notion → база знаний"),
             BotCommand("kb", "Показать базу знаний"),
             BotCommand("id", "ID этого чата"),
@@ -2485,6 +2639,7 @@ def main():
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("ai", cmd_ai_check))
+    app.add_handler(CommandHandler("session", cmd_session))
     app.add_handler(CommandHandler("notion", cmd_notion_sync))
     app.add_handler(CommandHandler("kb", cmd_knowledge))
     app.add_handler(CallbackQueryHandler(on_menu, pattern="^menu::"))
