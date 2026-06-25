@@ -326,7 +326,7 @@ def trim_chatlog(chat_log, level):
     level = max(0, min(10, int(level)))
     if level == 0:
         # ничего не режем: все реплики целиком (только схлопываем пробелы/переносы)
-        out = [f"{name}: {re.sub(r'\s+', ' ', str(text)).strip()}" for name, text in chat_log]
+        out = ["{}: {}".format(name, re.sub(r'\s+', ' ', str(text)).strip()) for name, text in chat_log]
         return "\n".join(out) or "(переписки пока нет)"
 
     _, keep_n, max_chars = _trim_params(level)

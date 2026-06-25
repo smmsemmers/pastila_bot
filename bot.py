@@ -219,7 +219,7 @@ def _load_knowledge():
 
 
 def _add_knowledge_item(source: str, item_id: str, title: str, content: str,
-                        tags: list[str] | None = None):
+                        tags=None):
     """Добавляет элемент в память и в Sheet (если ещё не было)."""
     if item_id in _KNOWLEDGE_IDS:
         return False
@@ -240,7 +240,7 @@ def _add_knowledge_item(source: str, item_id: str, title: str, content: str,
 
 
 def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000,
-                filter_tags: list[str] | None = None) -> str:
+                filter_tags=None) -> str:
     """Форматирует базу знаний для вставки в промпт LLM. Опционально фильтрует по тегам."""
     if not _KNOWLEDGE:
         return ""
