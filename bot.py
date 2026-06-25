@@ -2839,6 +2839,33 @@ PIN_SECTIONS = {
         "Планирование было хаосом → теперь ИИ помогает расставить приоритеты\n\n"
         f'📊 <a href="{_SHEET_URL}">Открыть таблицу задач</a>',
     ),
+    "terminal": (
+        "💻 Терминал и Claude",
+        "<b>💻 Как программировать через терминал</b>\n\n"
+        "Весь код бота пишет <b>Claude Code</b> — ИИ-помощник прямо в терминале.\n"
+        "Лена открывает терминал, говорит что нужно — Claude пишет код, тестирует и пушит.\n\n"
+        "─────────────────────────\n"
+        "<b>Как запустить</b>\n\n"
+        "1. Открыть Terminal (Cmd+Space → Terminal)\n"
+        "2. Перейти в папку проекта:\n"
+        "   <code>cd ~/pastila_bot</code>\n"
+        "3. Запустить Claude Code:\n"
+        "   <code>claude</code>\n"
+        "4. Написать что нужно сделать — например:\n"
+        "   <i>«добавь команду /stats которая показывает статистику задач»</i>\n\n"
+        "Claude сам читает код, вносит изменения, проверяет синтаксис и пушит в GitHub.\n"
+        "Render видит push → автоматически деплоит новую версию бота.\n\n"
+        "─────────────────────────\n"
+        "<b>Подключённые коннекторы</b>\n\n"
+        "🔌 <b>Telegram</b> — Claude видит сообщения из чата и может отвечать прямо в него\n"
+        "📝 <b>Notion</b> — читает и редактирует страницы в Notion\n"
+        "🔍 <b>Atlassian</b> — подключён (Jira/Confluence если понадобится)\n\n"
+        "─────────────────────────\n"
+        "<b>Весь путь изменения</b>\n\n"
+        "Терминал → Claude пишет код → git push → Render деплоит → бот обновлён\n"
+        "Обычно занимает 2–5 минут от идеи до живой фичи.\n\n"
+        "Код: github.com/smmsemmers/pastila_bot",
+    ),
     "story": (
         "📖 Как это устроено",
         "<b>📖 Как мы построили это рабочее пространство</b>\n\n"
@@ -3645,7 +3672,23 @@ def main():
             ", ".join(missing),
         )
 
-    app = Application.builder().token(BOT_TOKEN).post_init(_set_commands).build()
+    async def _post_init(application):
+        await _set_commands(application)
+        # Отправляем /pin в группу при каждом старте — обновляет закреплённое сообщение
+        if GROUP_CHAT_ID:
+            try:
+                await application.bot.send_message(
+                    chat_id=GROUP_CHAT_ID,
+                    text=PIN_MAIN_TEXT,
+                    parse_mode="HTML",
+                    reply_markup=pin_main_keyboard(),
+                    disable_web_page_preview=True,
+                )
+                logger.info("Стартовый /pin отправлен в группу.")
+            except Exception as e:
+                logger.warning("Не смог отправить стартовый /pin: %s", e)
+
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     conv = ConversationHandler(
         entry_points=[
