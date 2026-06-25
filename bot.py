@@ -289,6 +289,23 @@ def _kb_search(query: str, max_results: int = 5) -> list[dict]:
     return [item for _, item in scored[:max_results]]
 
 
+def purge_all_tasks() -> int:
+    """Удаляет все строки с задачами из таблицы, оставляя заголовок. Возвращает кол-во удалённых."""
+    try:
+        ws = get_worksheet()
+        all_rows = ws.get_all_values()
+        if len(all_rows) <= 1:
+            return 0
+        count = len(all_rows) - 1
+        # Оставляем только первую строку (заголовок)
+        ws.resize(rows=1)
+        logger.info("Purge: удалено %d задач из таблицы", count)
+        return count
+    except Exception as e:
+        logger.error("purge_all_tasks: %s", e)
+        return -1
+
+
 def append_task_to_sheet(date_str, who, task_title, deadline, status, link=""):
     """Добавляет строку в таблицу: Дата | Кто | Задача | Дедлайн | Статус | Ссылка."""
     try:
@@ -818,6 +835,39 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text("Отменено. Чтобы начать заново — /new")
     return ConversationHandler.END
+
+
+async def cmd_purge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/purge — запрашивает подтверждение перед удалением всех задач из таблицы."""
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}" if SHEET_ID else "таблица"
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🗑 Да, удалить всё", callback_data="purge::confirm"),
+        InlineKeyboardButton("❌ Отмена", callback_data="purge::cancel"),
+    ]])
+    await update.message.reply_text(
+        "⚠️ Это удалит ВСЕ задачи из Google Sheets.\n"
+        "Сообщения в Telegram останутся, только таблица будет очищена.\n\n"
+        "Продолжить?",
+        reply_markup=keyboard,
+    )
+
+
+async def on_purge_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопок подтверждения /purge."""
+    query = update.callback_query
+    await query.answer()
+    action = query.data.split("::", 1)[1]
+    if action == "cancel":
+        await query.edit_message_text("Отменено — задачи не тронуты.")
+        return
+    await query.edit_message_text("🗑 Удаляю все задачи…")
+    count = await asyncio.to_thread(purge_all_tasks)
+    if count == -1:
+        await query.edit_message_text("⚠️ Ошибка при очистке таблицы.")
+    elif count == 0:
+        await query.edit_message_text("Таблица уже пуста — нечего удалять.")
+    else:
+        await query.edit_message_text(f"✅ Удалено задач: {count}. Таблица очищена.")
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2778,6 +2828,7 @@ async def _set_commands(app):
             BotCommand("alerts", "Дедлайны на завтра"),
             BotCommand("analyze", "Найти задачи в переписке"),
             BotCommand("plan", "План работы для Лены и Глеба"),
+            BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
             BotCommand("session", "Добавить сессию/лог в базу знаний"),
             BotCommand("find", "Найти в базе знаний по теме или тегу"),
@@ -2857,6 +2908,8 @@ def main():
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("ai", cmd_ai_check))
+    app.add_handler(CommandHandler("purge", cmd_purge))
+    app.add_handler(CallbackQueryHandler(on_purge_confirm, pattern="^purge::"))
     app.add_handler(CommandHandler("session", cmd_session))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("notion", cmd_notion_sync))
