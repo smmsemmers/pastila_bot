@@ -2798,11 +2798,25 @@ EXPORT_ANALYZE_PROMPT = (
 )
 
 
-_EXPORT_STASH: dict[int, list] = {}  # message_id списка → сессии экспорта
+_EXPORT_STASH: dict[int, dict] = {}  # message_id списка → {sessions, selected}
+_EXPORT_MAX_BTN = 60  # максимум сессий-чекбоксов (лимит Telegram на кнопки)
+
+
+def _export_keyboard(sessions: list, selected: set) -> InlineKeyboardMarkup:
+    rows = []
+    for i, s in enumerate(sessions[:_EXPORT_MAX_BTN]):
+        mark = "✅" if i in selected else "☐"
+        d = f" · {s['date'][5:]}" if s.get("date") else ""
+        rows.append([InlineKeyboardButton(
+            f"{mark} {i + 1}. {s['name'][:32]}{d}", callback_data=f"exps::{i}")])
+    rows.append([InlineKeyboardButton(
+        f"▶️ Разобрать выбранные ({len(selected)})", callback_data="exp::sel")])
+    rows.append([InlineKeyboardButton("📋 Разобрать все", callback_data="exp::all")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
-    """Экспорт Claude → сразу список названий сессий + кнопка «Разобрать все»."""
+    """Экспорт Claude → список сессий с галочками: отметь нужные и разбери."""
     msg = update.message
     note = await msg.reply_text("📦 Экспорт Claude — читаю список сессий…")
     try:
@@ -2816,18 +2830,12 @@ async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_T
     if not sessions:
         await note.edit_text("В экспорте не нашёл сессий с текстом.")
         return
-
-    lines = [f"🗂 <b>Экспорт Claude — {len(sessions)} сессий</b>", ""]
-    for i, s in enumerate(sessions[:100], 1):
-        d = f" · {s['date']}" if s.get("date") else ""
-        lines.append(f"{i}. {html.escape(s['name'][:70])}{d}")
-    if len(sessions) > 100:
-        lines.append(f"…и ещё {len(sessions) - 100}")
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📋 Разобрать все сессии", callback_data="exp::all"),
-    ]])
-    sent = await note.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
-    _EXPORT_STASH[sent.message_id] = sessions
+    text = (f"🗂 Экспорт Claude — {len(sessions)} сессий.\n"
+            "Отметь галочками нужные → «Разобрать выбранные», или «Разобрать все».")
+    if len(sessions) > _EXPORT_MAX_BTN:
+        text += f"\n(галочки — на первые {_EXPORT_MAX_BTN}; «Все» разберёт целиком)"
+    sent = await note.edit_text(text, reply_markup=_export_keyboard(sessions, set()))
+    _EXPORT_STASH[sent.message_id] = {"sessions": sessions, "selected": set()}
 
 
 async def _run_export_breakdown(sessions: list) -> str:
@@ -2845,12 +2853,40 @@ async def _run_export_breakdown(sessions: list) -> str:
 
 
 async def on_export_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Кнопка «Разобрать все сессии» под списком экспорта."""
+    """Список сессий: переключение галочек + разбор выбранных/всех."""
     query = update.callback_query
-    sessions = _EXPORT_STASH.get(query.message.message_id)
-    if not sessions:
+    st = _EXPORT_STASH.get(query.message.message_id)
+    if not st:
         await query.answer("Список устарел — пришли экспорт заново.", show_alert=True)
         return
+    data = query.data or ""
+
+    # переключить галочку сессии
+    if data.startswith("exps::"):
+        try:
+            i = int(data.split("::")[1])
+        except (IndexError, ValueError):
+            await query.answer()
+            return
+        sel = st["selected"]
+        sel.discard(i) if i in sel else sel.add(i)
+        await query.answer()
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=_export_keyboard(st["sessions"], sel))
+        except Exception:
+            pass
+        return
+
+    # разобрать: выбранные или все
+    if data == "exp::all":
+        sessions = st["sessions"]
+    else:  # exp::sel
+        idxs = sorted(st["selected"])
+        if not idxs:
+            await query.answer("Отметь хотя бы одну сессию галочкой.", show_alert=True)
+            return
+        sessions = [st["sessions"][i] for i in idxs if i < len(st["sessions"])]
     if not llm.OPENROUTER_API_KEY:
         await query.answer("Нет OPENROUTER_API_KEY.", show_alert=True)
         return
@@ -4668,7 +4704,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
     app.add_handler(CallbackQueryHandler(on_content_task, pattern="^ctask::"))
     app.add_handler(CallbackQueryHandler(on_file_action, pattern="^fa::"))
-    app.add_handler(CallbackQueryHandler(on_export_action, pattern="^exp::"))
+    app.add_handler(CallbackQueryHandler(on_export_action, pattern="^exps?::"))
     app.add_handler(CommandHandler("tokens", cmd_tokens))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
