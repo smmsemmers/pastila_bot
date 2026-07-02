@@ -36,6 +36,12 @@ except ImportError:
     _DOCX_OK = False
 
 try:
+    import openpyxl
+    _XLSX_OK = True
+except ImportError:
+    _XLSX_OK = False
+
+try:
     from notion_client import AsyncClient as NotionClient
     _NOTION_SDK_OK = True
 except ImportError:
@@ -1727,7 +1733,7 @@ def _extract_pdf(data: bytes) -> str:
     try:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             pages = [p.extract_text() or "" for p in pdf.pages]
-        return "\n".join(p for p in pages if p.strip())[:6000]
+        return "\n".join(p for p in pages if p.strip())[:20000]
     except Exception as e:
         logger.error("PDF extract: %s", e)
         return ""
@@ -1738,9 +1744,35 @@ def _extract_docx(data: bytes) -> str:
         return ""
     try:
         doc = DocxDocument(io.BytesIO(data))
-        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:6000]
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:20000]
     except Exception as e:
         logger.error("DOCX extract: %s", e)
+        return ""
+
+
+def _extract_xlsx(data: bytes) -> str:
+    """Читает Excel: все листы → текст (заголовки + строки). До 300 строк на лист."""
+    if not _XLSX_OK:
+        return ""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        parts = []
+        for ws in wb.worksheets:
+            rows = []
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i >= 300:
+                    rows.append("… (лист обрезан)")
+                    break
+                cells = [str(c) for c in row if c is not None]
+                if cells:
+                    rows.append(" | ".join(cells))
+            if rows:
+                parts.append(f"### Лист «{ws.title}» ({ws.max_row}×{ws.max_column})\n"
+                             + "\n".join(rows))
+        wb.close()
+        return "\n\n".join(parts)[:20000]
+    except Exception as e:
+        logger.error("XLSX extract: %s", e)
         return ""
 
 
@@ -1821,7 +1853,7 @@ async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
         raw = await llm.call_llm(
             [llm.sys_cached(INGEST_SYSTEM_PROMPT),
              {"role": "user",
-              "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:8000]}"}],
+              "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:16000]}"}],
             "opus48", temperature=0.2, max_tokens=1200,
             response_format={"type": "json_object"},
         )
@@ -1961,6 +1993,13 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             content = await asyncio.to_thread(_extract_docx, data)
             label = "DOCX"
 
+        elif mime in (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        ) or filename.lower().endswith((".xlsx", ".xls")):
+            content = await asyncio.to_thread(_extract_xlsx, data)
+            label = "Таблица"
+
         elif mime.startswith("image/") or filename.lower().endswith(
                 (".jpg", ".jpeg", ".png", ".webp", ".gif")):
             content = await _vision_describe(data, filename)
@@ -1979,7 +2018,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "text/plain", "text/csv", "application/json",
             "application/xml", "text/markdown",
         ) or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
-            content = data.decode("utf-8", errors="replace")[:6000]
+            content = data.decode("utf-8", errors="replace")[:20000]
             label = "Текст"
 
         else:
@@ -2004,8 +2043,8 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Архив «Контент» — сортируемый по дате/теме/актуальности/типу
-        kind_map = {"PDF": "документ", "DOCX": "документ", "Текст": "текст/файл",
-                    "Изображение": "фото", "Аудио": "голос"}
+        kind_map = {"PDF": "документ", "DOCX": "документ", "Таблица": "таблица",
+                    "Текст": "текст/файл", "Изображение": "фото", "Аудио": "голос"}
         kind = kind_map.get(label, "файл")
         fmt = (os.path.splitext(filename)[1].lstrip(".").lower()
                if filename else "") or label.lower()
@@ -2338,7 +2377,7 @@ async def _handle_session_file(update: Update, context: ContextTypes.DEFAULT_TYP
         elif mime.startswith("image/"):
             content = await _vision_describe(data, filename)
         elif filename.lower().endswith((".txt", ".md", ".csv")):
-            content = data.decode("utf-8", errors="replace")[:6000]
+            content = data.decode("utf-8", errors="replace")[:20000]
         else:
             content = ""
 
