@@ -2883,7 +2883,10 @@ _EXPORT_MAX_BTN = 60  # максимум сессий-чекбоксов (лим
 
 
 def _export_keyboard(sessions: list, selected: set) -> InlineKeyboardMarkup:
-    rows = []
+    n = min(len(sessions), _EXPORT_MAX_BTN)
+    all_on = len(selected) >= n and n > 0
+    rows = [[InlineKeyboardButton(
+        "☑️ Снять все" if all_on else "✅ Выбрать все", callback_data="exp::toggleall")]]
     for i, s in enumerate(sessions[:_EXPORT_MAX_BTN]):
         mark = "✅" if i in selected else "☐"
         d = f" · {s['date'][5:]}" if s.get("date") else ""
@@ -2954,6 +2957,18 @@ async def on_export_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.edit_message_reply_markup(
                 reply_markup=_export_keyboard(st["sessions"], sel))
+        except Exception:
+            pass
+        return
+
+    # выбрать все / снять все одним тапом
+    if data == "exp::toggleall":
+        n = min(len(st["sessions"]), _EXPORT_MAX_BTN)
+        st["selected"] = set() if len(st["selected"]) >= n else set(range(n))
+        await query.answer("Все выбраны" if st["selected"] else "Сняты")
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=_export_keyboard(st["sessions"], st["selected"]))
         except Exception:
             pass
         return
