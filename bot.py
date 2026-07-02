@@ -1240,10 +1240,13 @@ VOICE_ROUTER_PROMPT = (
     "Ты — роутер голосовых команд для Pastila OS (Лена + Глеб, бизнес по пастиле). "
     "Тебе дают транскрипт голосового. Определи намерение и верни СТРОГО JSON — один из шести.\n\n"
 
-    "1. СОЗДАТЬ ЗАДАЧУ — только если явно просят «поставь задачу», «создай задачу», "
-    "«запиши поручение», «добавь задачу»:\n"
+    "1. СОЗДАТЬ ЗАДАЧУ / ВСТРЕЧУ / НАПОМИНАНИЕ — если просят запланировать или поручить: "
+    "«поставь задачу», «создай задачу», «запиши поручение», «добавь задачу», «поставь встречу», "
+    "«запланируй», «назначь встречу», «напомни» + событие/действие:\n"
     '{"type":"task","title":"...","dod":"","who":"","deadline":"","steps":[],"materials":"","tags":[],"status":"NEW"}\n'
-    "who — «Лена»/«Глеб»/«Лена + Глеб»/\"\"; deadline — ДД.ММ или \"\" (относительные от сегодня).\n\n"
+    "who — «Лена»/«Глеб»/«Лена + Глеб»/\"\"; deadline — ДД.ММ, либо время/дата если названы "
+    "(«на 15» → «сегодня 15:00», «завтра», «в пятницу»), иначе \"\"; "
+    "title — суть («Встреча в 15:00»). Относительные даты от сегодня.\n\n"
 
     "2. ПОКАЗАТЬ ЗАДАЧИ — «покажи задачи», «что в работе», «список задач», «что у Глеба/Лены»:\n"
     '{"type":"list","who":"Лена"|"Глеб"|"Лена + Глеб"|""}\n'
@@ -1613,6 +1616,68 @@ async def on_log_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(
         _check_triggers(msg.chat_id, msg.text, context.bot)
     )
+    # понимание обычных фраз (как ai): «поставь встречу», «напомни», «покажи задачи»…
+    asyncio.create_task(_maybe_handle_nl(update, context))
+
+
+# ── Натуральный язык: понимает просьбы словами и сам действует ──
+_NL_TRIGGER = re.compile(
+    r"(поставь|постав|заведи|завед|созда|добавь|запиши|напомни|напомнить|запланируй|назнач|"
+    r"встреч|поручени|задач|покажи|список|что в работе|составь план|дедлайн|что сдавать|найди)",
+    re.I,
+)
+
+
+async def _maybe_handle_nl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обычный текст → интент-роутер (тот же, что для голоса) → действие/ответ.
+    Срабатывает только на явную просьбу / упоминание / ответ боту — чтобы не спамить."""
+    msg = update.message
+    if not msg or not msg.text or not llm.OPENROUTER_API_KEY:
+        return
+    text = msg.text.strip()
+    bot_un = (context.bot.username or "").lower()
+    low = text.lower()
+    mentioned = bool(bot_un) and ("@" + bot_un) in low
+    is_private = msg.chat.type == "private"
+    r2b = bool(
+        msg.reply_to_message and msg.reply_to_message.from_user
+        and msg.reply_to_message.from_user.id == context.bot.id
+    )
+    if not (is_private or mentioned or r2b or _NL_TRIGGER.search(text)):
+        return
+    q = re.sub(r"@" + re.escape(bot_un), "", text, flags=re.I).strip() if bot_un else text
+    if len(q) < 3:
+        return
+    try:
+        result = await _gpt_voice_route(q, msg.chat_id)
+    except Exception as e:
+        logger.error("nl route: %s", e)
+        return
+    if not isinstance(result, dict):
+        return
+    vtype = result.get("type")
+    try:
+        if vtype == "task":
+            data = _draft_from_parsed(result)
+            await publish_task(context.bot, data)
+            dl = f" · 🗓 {data['deadline']}" if data.get("deadline") else ""
+            await msg.reply_text(f"✅ Завёл: {data.get('title', 'задача')}{dl}")
+        elif vtype == "list":
+            await cmd_list(update, context)
+        elif vtype == "digest":
+            await cmd_digest(update, context)
+        elif vtype == "analyze":
+            await cmd_analyze(update, context)
+        elif vtype == "plan":
+            await cmd_plan(update, context)
+        else:  # query — аналитический ответ
+            await context.bot.send_chat_action(msg.chat_id, "typing")
+            buf = _CHAT_LOG.get(msg.chat_id, [])
+            ans = await _gpt_voice_analyze(result.get("clean_text") or q, buf, msg.chat_id)
+            if ans:
+                await msg.reply_text(ans)
+    except Exception as e:
+        logger.error("nl handle (%s): %s", vtype, e)
 
 
 # ------------------------------------------------------------------
