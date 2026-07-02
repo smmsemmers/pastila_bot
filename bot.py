@@ -12,6 +12,9 @@ import datetime
 import json
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
+load_dotenv()  # локально подхватывает .env; на Render переменные уже в окружении — no-op
+
 import base64
 import io
 import hashlib

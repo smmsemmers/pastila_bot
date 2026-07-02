@@ -6,3 +6,4 @@ httpx
 pdfplumber
 python-docx
 notion-client
+python-dotenv
