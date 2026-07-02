@@ -74,3 +74,38 @@ services:
       # false: только ⭐-реакция + тихое сохранение в KB
       - key: INSIGHT_NOTIFY
         value: "true"
+
+  # ── GPT-бот (@pastila_gPT_remote_bot), код в подпапке gpt-remote/ ──
+  # Отдельный воркер: Node.js, polling, входящего порта нет.
+  - type: worker
+    name: pastila-gpt-remote
+    runtime: node
+    plan: free
+    rootDir: gpt-remote
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Токен бота от @BotFather
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # OpenAI
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: "gpt-4o-mini"
+      # Контроль доступа: Telegram numeric ID через запятую
+      - key: ALLOWED_USER_IDS
+        sync: false
+      - key: ALLOWED_CHAT_IDS
+        sync: false
+      # Codex / выполнение локальных команд (по умолчанию выключено)
+      - key: ENABLE_CODEX
+        value: "false"
+      - key: CODEX_WORKDIR
+        sync: false
+      - key: CODEX_SANDBOX
+        sync: false
+      - key: CODEX_TIMEOUT_MS
+        sync: false
