@@ -3017,9 +3017,16 @@ async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc or not (doc.file_name or "").lower().endswith(".json"):
         return
     fn = (doc.file_name or "").lower()
-    # Экспорт Claude (conversations.json / data-*.json) — сразу авто-разбор по сессиям.
+    # Экспорт Claude — разбирает Клод-бот (бридж), не я. Если бридж запущен, он получает
+    # этот файл напрямую и сам разбирает по сессиям (инструкция в CLAUDE.md).
     if fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json")):
-        await _analyze_claude_export(update, context, doc)
+        await msg.reply_text(
+            "📦 Экспорт Claude — этим занимается 💻 @pastila_code_remote_bot (Claude Code).\n\n"
+            "Если бридж запущен — он уже получил файл и разбирает его по сессиям.\n"
+            "Если нет — запусти его (двойной клик <code>start-code-bridge.command</code>) и кинь файл снова.\n\n"
+            "Я (task-бот) экспорты не разбираю — только обычные документы, фото, голос.",
+            parse_mode="HTML",
+        )
         return
     # Тихо проверяем: это вообще Telegram-экспорт (result.json)? Если нет
     # (напр. memories.json / users.json из экспорта Claude) — молча выходим,
