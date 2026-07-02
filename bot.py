@@ -4660,7 +4660,10 @@ def main():
     app.add_handler(CallbackQueryHandler(on_quick_status, pattern="^quick::"))
     app.add_handler(CallbackQueryHandler(on_voice_action, pattern="^voice::"))
     app.add_handler(CallbackQueryHandler(on_voice_status, pattern="^voicestatus::"))
-    app.add_handler(MessageHandler(filters.VOICE, on_voice))
+    # Авто-расшифровку голосовых ведёт Claude-бридж; task-бот молчит на голос.
+    # Включить обратно: VOICE_AUTO_TRANSCRIBE=1 в окружении (Render).
+    if os.environ.get("VOICE_AUTO_TRANSCRIBE", "0") == "1":
+        app.add_handler(MessageHandler(filters.VOICE, on_voice))
     app.add_handler(edit_conv)
     app.add_handler(conv)
     # импорт истории: result.json экспорта Telegram (вне диалога /new)
