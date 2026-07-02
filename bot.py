@@ -242,6 +242,58 @@ def _add_knowledge_item(source: str, item_id: str, title: str, content: str,
     return True
 
 
+# ── Архив контента: лист «Контент» ────────────────────────────────
+# Бот складывает сюда ВСЁ присланное в чат с метаданными, чтобы можно было
+# сортировать/фильтровать по дате, теме, актуальности, типу — как папку-архив.
+_CONTENT_TAB = "Контент"
+_CONTENT_HEADERS = [
+    "Дата", "Тип", "Формат", "Тема", "Актуальность",
+    "Автор", "Заголовок", "Суть", "Ссылка",
+]
+
+# 12 бизнес-тем для авто-тегирования присланного контента
+CONTENT_TOPICS = [
+    "производство", "сырьё", "упаковка", "маркетинг", "продажи", "финансы",
+    "команда", "клиенты", "логистика", "стратегия", "документы", "прочее",
+]
+
+
+def _content_ws():
+    """Вкладка «Контент», создаёт если нет."""
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS", "")
+    if not creds_json or not SHEET_ID:
+        return None
+    try:
+        creds = Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        sh = gspread.authorize(creds).open_by_key(SHEET_ID)
+        try:
+            ws = sh.worksheet(_CONTENT_TAB)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(_CONTENT_TAB, rows=2000, cols=len(_CONTENT_HEADERS))
+            ws.append_row(_CONTENT_HEADERS, value_input_option="USER_ENTERED")
+        return ws
+    except Exception as e:
+        logger.error("_content_ws: %s", e)
+        return None
+
+
+def _log_content(kind, fmt, topic, actuality, author, title, gist, link=""):
+    """Добавляет строку в архив «Контент»."""
+    now = datetime.datetime.now(TZINFO).strftime("%Y-%m-%d %H:%M")
+    try:
+        ws = _content_ws()
+        if ws:
+            ws.append_row(
+                [now, kind, fmt, topic, actuality, author, title, gist, link],
+                value_input_option="USER_ENTERED",
+            )
+    except Exception as e:
+        logger.error("_log_content: %s", e)
+
+
 def _kb_context(max_chars_per_item: int = 800, max_total: int = 8000,
                 filter_tags=None) -> str:
     """Форматирует базу знаний для вставки в промпт LLM. Опционально фильтрует по тегам."""
@@ -1738,6 +1790,96 @@ async def _summarize_content(content: str, title: str) -> str:
         return ""
 
 
+# ── Единый разбор присланного контента (тема, актуальность, саммари, задачи) ──
+INGEST_SYSTEM_PROMPT = (
+    "Ты помощник Лены в бизнесе по белёвской пастиле (проект Pastila OS; партнёр — Глеб). "
+    "Лена не всегда в курсе всех дел Глеба, поэтому объясняй ПРОСТО, ЧЁТКО и по делу. "
+    "Тебе дают контент из рабочего чата (документ, расшифровку голоса, описание фото). "
+    "Верни СТРОГО JSON с полями:\n"
+    '- "topic": одна тема из списка [' + ", ".join(CONTENT_TOPICS) + "] — к чему это относится;\n"
+    '- "actuality": "высокая" | "средняя" | "низкая" — насколько это важно/срочно для дела сейчас;\n'
+    '- "title": короткий понятный заголовок (до 60 символов);\n'
+    '- "summary": понятное структурное саммари для Лены простыми словами: что это, о чём, '
+    "что главное и что с этим делать. Короткими пунктами, без канцелярита и воды. "
+    "Если это таблица или цифры — поясни, что они означают;\n"
+    '- "tasks": массив (максимум 3) конкретных задач/поручений, если они есть в контенте. '
+    "Каждая: {title, who, deadline, dod, steps, tags, status}. "
+    'who — «Лена»/«Глеб»/«Лена + Глеб»/""; deadline — ДД.ММ или ""; steps — массив строк; '
+    'tags — массив слов без #; status всегда "NEW". Если задач нет — [].\n'
+    "Отвечай по-русски."
+)
+
+
+async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
+    """Разбор присланного контента флагманом (Opus 4.8):
+    тема, актуальность, понятное саммари и задачи. Возвращает dict."""
+    fallback = {"topic": "прочее", "actuality": "средняя",
+                "title": (title or "Контент")[:80], "summary": "", "tasks": []}
+    if not llm.OPENROUTER_API_KEY or len((content or "").strip()) < 30:
+        return fallback
+    try:
+        raw = await llm.call_llm(
+            [llm.sys_cached(INGEST_SYSTEM_PROMPT),
+             {"role": "user",
+              "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:8000]}"}],
+            "opus48", temperature=0.2, max_tokens=1200,
+            response_format={"type": "json_object"},
+        )
+        obj = llm.loads_loose(raw)
+        if not isinstance(obj, dict):
+            return fallback
+        topic = str(obj.get("topic", "прочее")).lower().strip()
+        if topic not in CONTENT_TOPICS:
+            topic = "прочее"
+        act = str(obj.get("actuality", "средняя")).lower().strip()
+        if act not in ("высокая", "средняя", "низкая"):
+            act = "средняя"
+        tasks = obj.get("tasks") if isinstance(obj.get("tasks"), list) else []
+        return {"topic": topic, "actuality": act,
+                "title": (str(obj.get("title") or title or "Контент"))[:80],
+                "summary": str(obj.get("summary", "")).strip(),
+                "tasks": tasks[:3]}
+    except Exception as e:
+        logger.error("_ingest_analyze: %s", e)
+        return fallback
+
+
+_ACT_ICON = {"высокая": "🔴", "средняя": "🟡", "низкая": "⚪"}
+_CONTENT_TASKS: dict[int, list] = {}  # chat_id → задачи, найденные в последнем контенте
+
+
+async def on_content_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка «Завести задачу» под разбором присланного контента."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        idx = int(query.data.split("::")[1])
+    except (IndexError, ValueError):
+        return
+    tasks = _CONTENT_TASKS.get(query.message.chat_id, [])
+    if idx >= len(tasks):
+        await query.edit_message_text("Задача уже недоступна — пришли контент заново.")
+        return
+    t = tasks[idx]
+    steps = t.get("steps", [])
+    data = {
+        "title": t.get("title", ""),
+        "dod": t.get("dod", ""),
+        "who": t.get("who", ""),
+        "deadline": t.get("deadline", ""),
+        "steps": steps if isinstance(steps, list) else [],
+        "tags": " ".join(f"#{x.lstrip('#')}" for x in (t.get("tags") or [])),
+        "status": "🟡 TODO",
+        "materials": [],
+    }
+    try:
+        await publish_task(context.bot, data)
+        await query.edit_message_text(f"✅ Задача заведена: {data['title']}")
+    except Exception as e:
+        logger.error("on_content_task: %s", e)
+        await query.edit_message_text(f"⚠️ Не смог завести задачу: {e}")
+
+
 async def _download_tg_file(bot, file_id: str) -> bytes:
     tg_file = await bot.get_file(file_id)
     buf = io.BytesIO()
@@ -1829,24 +1971,61 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(f"📎 «{title}» — не смог извлечь текст.")
             return
 
+        # Единый разбор: тема, актуальность, понятное саммари, задачи
+        analysis = await _ingest_analyze(content, label, title)
+        topic = analysis["topic"]
+        act = analysis["actuality"]
+        summary = analysis["summary"] or await _summarize_content(content, title)
+
         added = await asyncio.to_thread(
-            _add_knowledge_item, f"telegram_{label}", item_id, title, content
+            _add_knowledge_item, f"telegram_{label}", item_id,
+            analysis["title"], content, [topic],
         )
-        if added:
-            summary = await _summarize_content(content, title)
-            if summary:
-                await status_msg.edit_text(
-                    f"✅ {label} «{title}» добавлен в базу знаний.\n\n"
-                    f"📋 Саммари:\n{summary}"
-                )
-            else:
-                snippet = content[:200].replace("\n", " ")
-                await status_msg.edit_text(
-                    f"✅ {label} «{title}» добавлен в базу знаний.\n"
-                    f"_{snippet}{'…' if len(content) > 200 else ''}_"
-                )
-        else:
-            await status_msg.edit_text(f"📎 «{title}» уже в базе знаний.")
+
+        # Архив «Контент» — сортируемый по дате/теме/актуальности/типу
+        kind_map = {"PDF": "документ", "DOCX": "документ", "Текст": "текст/файл",
+                    "Изображение": "фото", "Аудио": "голос"}
+        kind = kind_map.get(label, "файл")
+        fmt = (os.path.splitext(filename)[1].lstrip(".").lower()
+               if filename else "") or label.lower()
+        author = msg.from_user.full_name if msg.from_user else "?"
+        link = message_link(msg.chat_id, msg.message_id, msg.message_thread_id)
+        gist = (summary or content[:300]).replace("\n", " ")[:500]
+        await asyncio.to_thread(
+            _log_content, kind, fmt, topic, act, author,
+            analysis["title"], gist, link,
+        )
+
+        # Тихая реакция «принято в архив»
+        try:
+            await context.bot.set_message_reaction(
+                msg.chat_id, msg.message_id, [ReactionTypeEmoji(emoji="✍️")]
+            )
+        except Exception:
+            pass
+
+        # В чат — понятное саммари (то, что должна видеть Лена)
+        header = (f"📄 «{analysis['title']}»\n"
+                  f"🏷 #{topic} · {_ACT_ICON.get(act, '🟡')} актуальность: {act}")
+        body = f"\n\n{summary}" if summary else ""
+        note = "" if added else "\n\n_(уже было в базе)_"
+        await status_msg.edit_text(header + body + note)
+
+        # Найденные задачи → предложить завести
+        tasks = analysis.get("tasks") or []
+        if tasks:
+            _CONTENT_TASKS[msg.chat_id] = tasks
+            btns = [
+                [InlineKeyboardButton(
+                    f"✅ Завести: {(t.get('title') or 'задача')[:40]}",
+                    callback_data=f"ctask::{i}")]
+                for i, t in enumerate(tasks)
+            ]
+            await context.bot.send_message(
+                msg.chat_id, "Нашла возможные задачи — завести?",
+                reply_markup=InlineKeyboardMarkup(btns),
+                message_thread_id=msg.message_thread_id,
+            )
 
     except Exception as e:
         logger.error("on_file: %s", e)
@@ -3197,7 +3376,9 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------------
 _VOICE_MEMO_PROMPT = (
     "Ты — ассистент команды Pastila OS (белёвская пастила, Лена + Глеб).\n"
-    "Тебе дали транскрипт длинного голосового — брейнсторм, совещание или поток мыслей.\n\n"
+    "Тебе дали транскрипт длинного голосового — брейнсторм, совещание или поток мыслей.\n"
+    "Убери слова-паразиты, «ммм/эээ/ыыы», повторы и оговорки — передай ЧИСТЫЙ смысл "
+    "простыми чёткими словами, понятно даже без контекста.\n\n"
     "Выдай структуру:\n\n"
     "📝 Суть (2–3 предложения — о чём речь)\n\n"
     "✅ Действия\n"
@@ -3228,6 +3409,26 @@ async def _handle_long_voice(msg, transcript: str, status_msg):
         if not hasattr(msg, "_memo_store"):
             pass
         _MEMO_STORE[sent.message_id] = {"title": transcript[:60], "content": transcript, "summary": result.strip()}
+        # архивируем голос в лист «Контент»: тема, актуальность, задачи
+        try:
+            analysis = await _ingest_analyze(transcript, "голос", transcript[:60])
+            author = msg.from_user.full_name if msg.from_user else "?"
+            link = message_link(msg.chat_id, sent.message_id, msg.message_thread_id)
+            await asyncio.to_thread(
+                _log_content, "голос", "voice", analysis["topic"],
+                analysis["actuality"], author, analysis["title"],
+                (analysis["summary"] or transcript[:300]).replace("\n", " ")[:500], link,
+            )
+            tasks = analysis.get("tasks") or []
+            if tasks:
+                _CONTENT_TASKS[msg.chat_id] = tasks
+                btns = [[InlineKeyboardButton(
+                    f"✅ Завести: {(t.get('title') or 'задача')[:40]}",
+                    callback_data=f"ctask::{i}")] for i, t in enumerate(tasks)]
+                await msg.reply_text("Нашла возможные задачи — завести?",
+                                     reply_markup=InlineKeyboardMarkup(btns))
+        except Exception as e:
+            logger.debug("voice archive: %s", e)
     except Exception as e:
         logger.error("long voice memo: %s", e)
         await status_msg.edit_text(f"⚠️ Ошибка разбора: {e}")
@@ -4114,6 +4315,7 @@ def main():
     app.add_handler(CommandHandler("remind_when", cmd_remind_when))
     app.add_handler(CallbackQueryHandler(on_alert_action, pattern="^alert::"))
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
+    app.add_handler(CallbackQueryHandler(on_content_task, pattern="^ctask::"))
     app.add_handler(CommandHandler("tokens", cmd_tokens))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
