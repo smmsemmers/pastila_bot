@@ -2031,12 +2031,21 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             await status_msg.edit_text(
-                f"📎 «{title}» — тип {mime or 'неизвестен'}, не знаю как читать."
+                f"📎 «{title}» — тип {mime or 'неизвестен'} я не разбираю.\n\n"
+                "Такое лучше отдать 💻 @pastila_code_remote_bot (Claude Code, есть инструменты):\n"
+                "запусти бридж (двойной клик <code>start-code-bridge.command</code>), "
+                "кинь файл и напиши «разбери».",
+                parse_mode="HTML",
             )
             return
 
         if not content or not content.strip():
-            await status_msg.edit_text(f"📎 «{title}» — не смог извлечь текст.")
+            await status_msg.edit_text(
+                f"📎 «{title}» — не смог вытащить текст (пустой/сложный формат).\n\n"
+                "Отдай 💻 @pastila_code_remote_bot (бридж, Claude Code) — у него есть инструменты "
+                "прочитать такое: запусти <code>start-code-bridge.command</code>, кинь файл, напиши «разбери».",
+                parse_mode="HTML",
+            )
             return
 
         # Единый разбор: тема, актуальность, понятное саммари, задачи
