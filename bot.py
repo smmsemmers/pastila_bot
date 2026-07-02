@@ -1920,6 +1920,26 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Пропускаем > 20 МБ (Telegram limit) и уже виденные
     if size > 20 * 1024 * 1024:
         return
+
+    # ── Маршрутизация: экспорт Claude / архив — не ко мне, а к Claude Code ──
+    # Task-бот не умеет распаковывать ZIP и разбирать многосессийный экспорт;
+    # глубокий разбор по сессиям (с данными и артефактами) делает @pastila_code_remote_bot.
+    fn = (filename or "").lower()
+    is_archive = mime in ("application/zip", "application/x-zip-compressed") or fn.endswith(
+        (".zip", ".tar", ".gz", ".rar", ".7z"))
+    is_claude_export = fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json"))
+    if is_archive or is_claude_export:
+        await msg.reply_text(
+            "📦 Похоже на экспорт Claude или архив — я (task-бот) такое не разбираю.\n\n"
+            "Глубокий разбор по сессиям (вопросы, ответы, данные, артефакты) делает "
+            "💻 @pastila_code_remote_bot (Claude Code, на Opus 4.8):\n"
+            "1. Запусти бридж — двойной клик по <code>start-code-bridge.command</code>.\n"
+            "2. Кинь этот файл и напиши «разбери по сессиям».\n\n"
+            "А мне (@PastilaTaskBot) шли обычные документы, фото и голосовые — их разбираю сам.",
+            parse_mode="HTML",
+        )
+        return
+
     item_id = file_id  # Telegram file_id стабилен для одного файла
     if item_id in _KNOWLEDGE_IDS:
         return
