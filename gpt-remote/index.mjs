@@ -151,7 +151,7 @@ function isMentioned(text) {
 }
 
 function startsWithKnownCommand(text) {
-  return /^\/(start|help|status|gpt|ocr|codex)(@\w+)?(\s|$)/i.test(text || "");
+  return /^\/(start|help|status|gpt|ocr|codex|research|deep)(@\w+)?(\s|$)/i.test(text || "");
 }
 
 function shouldRespond(msg) {
@@ -322,6 +322,39 @@ async function askRouted({ prompt, imageDataUrl, mode }) {
   return { text, category, route: { ...route, model } };
 }
 
+// ── Deep search: GPT-5.5 + веб-поиск (OpenRouter web plugin) ──
+const RESEARCH_MODEL = "openai/gpt-5.5";
+const RESEARCH_SYSTEM =
+  "Ты — исследователь для бизнеса по пастиле (Pastila OS). Ищи в интернете актуальные факты, " +
+  "цифры и источники. Отвечай по-русски: сначала краткий вывод, потом ключевые факты по пунктам. " +
+  "Опирайся на найденное, не выдумывай. Если данных мало — так и скажи.";
+
+async function deepResearch(query) {
+  const resp = await llm.chat.completions.create({
+    model: RESEARCH_MODEL,
+    max_tokens: 6000,
+    plugins: [{ id: "web", max_results: 8 }], // веб-поиск OpenRouter (deep search)
+    messages: [
+      { role: "system", content: RESEARCH_SYSTEM },
+      { role: "user", content: query },
+    ],
+  });
+  const msg = resp.choices?.[0]?.message || {};
+  const text = (msg.content || "").trim() || "Не удалось получить ответ.";
+  // источники из annotations (url_citation)
+  const seen = new Set();
+  const sources = [];
+  for (const a of msg.annotations || []) {
+    const u = a.url_citation || a;
+    const url = u.url;
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      sources.push({ url, title: (u.title || url).slice(0, 80) });
+    }
+  }
+  return { text, sources };
+}
+
 async function runCodex(task) {
   if (!ENABLE_CODEX) {
     return [
@@ -391,6 +424,7 @@ bot.on("message", async (msg) => {
           "Команды:",
           "/status — статус и карта моделей",
           "/gpt текст — спросить (модель выберется сама)",
+          "/research вопрос — 🔎 глубокий веб-поиск (GPT-5.5 + интернет, со ссылками)",
           "/ocr + картинка — извлечь текст с картинки",
           "/codex задача — запустить Codex CLI, если включён",
           "",
@@ -444,6 +478,31 @@ bot.on("message", async (msg) => {
       await bot.sendChatAction(chatId, "typing");
       const result = await runCodex(task);
       await sendLong(chatId, result);
+      return;
+    }
+
+    // /research или /deep — глубокий веб-поиск через GPT-5.5 + интернет
+    if (/^\/(research|deep)/i.test(rawText)) {
+      const q = stripBotMention(rawText).replace(/^\/(research|deep)(@\w+)?\s*/i, "").trim();
+      if (!q) {
+        await sendLong(chatId, "Напиши вопрос после /research. Например: /research цены на PP-стаканчики 375мл в ЕС");
+        return;
+      }
+      await bot.sendChatAction(chatId, "typing");
+      const wait = await bot.sendMessage(chatId, "🔎 Ищу в интернете (GPT-5.5 + deep search)…");
+      try {
+        const { text, sources } = await deepResearch(q);
+        let out = text;
+        if (sources.length) {
+          out += "\n\n🔗 Источники:\n" + sources.map((s, i) => `${i + 1}. ${s.title}\n${s.url}`).join("\n");
+        }
+        await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+        await sendLong(chatId, out);
+      } catch (e) {
+        await bot.editMessageText(`⚠️ Не удалось выполнить research: ${e.message || e}`, {
+          chat_id: chatId, message_id: wait.message_id,
+        });
+      }
       return;
     }
 
