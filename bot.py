@@ -1974,6 +1974,70 @@ _ACT_ICON = {"высокая": "🔴", "средняя": "🟡", "низкая":
 _CONTENT_TASKS: dict[int, list] = {}  # chat_id → задачи, найденные в последнем контенте
 
 
+# ── 10 кнопок анализа под присланным файлом ──
+FILE_ACTIONS = [
+    ("analyze",   "📋 Разбор",    "Дай полный разбор: что это, о чём, ключевое по пунктам, выводы."),
+    ("summary",   "✂️ Саммари",   "Краткая выжимка сути в 5–8 предложений, без воды."),
+    ("key",       "🎯 Главное",   "Только самое важное и что делать в первую очередь."),
+    ("tasks",     "✅ Задачи",    "Вытащи конкретные задачи и что нужно сделать: список (кто, что, срок)."),
+    ("structure", "🧩 Структура", "Приведи содержимое к чёткой структуре: разделы, пункты, таблицы."),
+    ("numbers",   "📊 Цифры",     "Разбери числа/таблицу: итоги, суммы, средние, что показывают данные, аномалии."),
+    ("risks",     "⚠️ Риски",     "Найди проблемы, риски, узкие места, на что обратить внимание."),
+    ("recs",      "💡 Советы",    "Дай конкретные рекомендации: что делать с этим, следующие шаги."),
+    ("changes",   "🔀 Изменения", "Что здесь нового или необычного, на что смотреть в первую очередь."),
+    ("ru",        "📝 По-русски", "Перескажи простыми словами по-русски, будто объясняешь коллеге."),
+]
+_FILE_ACTION_PROMPT = {k: p for k, _, p in FILE_ACTIONS}
+_FILE_STASH: dict[int, dict] = {}  # message_id саммари → {content, title}
+
+
+def _file_actions_keyboard():
+    rows, row = [], []
+    for key, label, _ in FILE_ACTIONS:
+        row.append(InlineKeyboardButton(label, callback_data=f"fa::{key}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+async def on_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Нажата кнопка анализа под файлом → нужный разбор через Opus."""
+    query = update.callback_query
+    key = query.data.split("::", 1)[1] if "::" in query.data else ""
+    stash = _FILE_STASH.get(query.message.message_id)
+    if not stash:
+        await query.answer("Файл уже недоступен — пришли заново.", show_alert=True)
+        return
+    prompt = _FILE_ACTION_PROMPT.get(key)
+    if not prompt:
+        await query.answer()
+        return
+    label = next((l for k, l, _ in FILE_ACTIONS if k == key), key)
+    await query.answer(f"{label}…")
+    wait = await context.bot.send_message(
+        query.message.chat_id, f"{label} — секунду…",
+        message_thread_id=query.message.message_thread_id,
+    )
+    try:
+        out = await llm.call_llm(
+            [{"role": "system", "content":
+              "Ты ИИ-аналитик Лены (бизнес по белёвской пастиле, партнёр Глеб). "
+              "Отвечай по-русски, структурно и по делу, без воды."},
+             {"role": "user", "content":
+              f"{prompt}\n\nФайл: «{stash['title']}».\n\nСодержимое:\n{stash['content'][:40000]}"}],
+            "opus48", temperature=0.2, max_tokens=2000,
+        )
+    except Exception as e:
+        logger.error("file action %s: %s", key, e)
+        await wait.edit_text(f"⚠️ Не смог: {e}")
+        return
+    text = f"{label} · «{stash['title']}»\n\n{(out or '').strip()}"
+    await wait.edit_text(text[:3900])
+
+
 async def on_content_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Кнопка «Завести задачу» под разбором присланного контента."""
     query = update.callback_query
@@ -2176,23 +2240,12 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         recs_block = ("\n\n💡 <b>Что я предлагаю сделать:</b>\n"
                       + "\n".join(f"• {esc(r)}" for r in recs)) if recs else ""
         note = "" if added else "\n\n<i>(уже было в базе)</i>"
-        await status_msg.edit_text(header + body + recs_block + note, parse_mode="HTML")
-
-        # Найденные задачи → предложить завести
-        tasks = analysis.get("tasks") or []
-        if tasks:
-            _CONTENT_TASKS[msg.chat_id] = tasks
-            btns = [
-                [InlineKeyboardButton(
-                    f"✅ Завести: {(t.get('title') or 'задача')[:40]}",
-                    callback_data=f"ctask::{i}")]
-                for i, t in enumerate(tasks)
-            ]
-            await context.bot.send_message(
-                msg.chat_id, "Нашла возможные задачи — завести?",
-                reply_markup=InlineKeyboardMarkup(btns),
-                message_thread_id=msg.message_thread_id,
-            )
+        # разбор + 10 кнопок анализа под файлом (ничего скрытого — всё видно)
+        await status_msg.edit_text(
+            header + body + recs_block + note,
+            parse_mode="HTML", reply_markup=_file_actions_keyboard(),
+        )
+        _FILE_STASH[status_msg.message_id] = {"content": content, "title": analysis["title"]}
 
     except Exception as e:
         logger.error("on_file: %s", e)
@@ -4502,6 +4555,12 @@ def main():
 
     async def _post_init(application):
         await _set_commands(application)
+        # Кнопка-меню («квадратик») показывает список команд — ничего скрытого.
+        try:
+            from telegram import MenuButtonCommands
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        except Exception as e:
+            logger.warning("set_chat_menu_button: %s", e)
         # Баннер /pin НЕ отправляем на старте: на Render воркер перезапускается при
         # каждом деплое (и иногда сам по себе), из-за чего баннер спамил группу.
         # Обновить закреплённое сообщение теперь можно вручную командой /pin.
@@ -4580,6 +4639,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_alert_action, pattern="^alert::"))
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
     app.add_handler(CallbackQueryHandler(on_content_task, pattern="^ctask::"))
+    app.add_handler(CallbackQueryHandler(on_file_action, pattern="^fa::"))
     app.add_handler(CommandHandler("tokens", cmd_tokens))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
