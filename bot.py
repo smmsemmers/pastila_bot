@@ -1733,7 +1733,7 @@ def _extract_pdf(data: bytes) -> str:
     try:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             pages = [p.extract_text() or "" for p in pdf.pages]
-        return "\n".join(p for p in pages if p.strip())[:20000]
+        return "\n".join(p for p in pages if p.strip())[:50000]
     except Exception as e:
         logger.error("PDF extract: %s", e)
         return ""
@@ -1744,33 +1744,54 @@ def _extract_docx(data: bytes) -> str:
         return ""
     try:
         doc = DocxDocument(io.BytesIO(data))
-        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:20000]
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())[:50000]
     except Exception as e:
         logger.error("DOCX extract: %s", e)
         return ""
 
 
 def _extract_xlsx(data: bytes) -> str:
-    """Читает Excel: все листы → текст (заголовки + строки). До 300 строк на лист."""
+    """Читает Excel ЦЕЛИКОМ: по каждому листу — итоги по всем строкам
+    (агрегаты по колонкам) + пример строк. Так модель видит всю таблицу, не кусок."""
     if not _XLSX_OK:
         return ""
+    from collections import Counter
     try:
         wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        parts = []
+        out = []
         for ws in wb.worksheets:
-            rows = []
-            for i, row in enumerate(ws.iter_rows(values_only=True)):
-                if i >= 300:
-                    rows.append("… (лист обрезан)")
-                    break
-                cells = [str(c) for c in row if c is not None]
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                continue
+            header = [str(c) if c is not None else f"col{i+1}" for i, c in enumerate(rows[0])]
+            body = rows[1:]
+            ncol = len(header)
+            stats = []
+            for ci in range(ncol):
+                vals = [r[ci] for r in body if ci < len(r) and r[ci] is not None]
+                nums = [v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+                if nums and len(nums) >= max(3, len(vals) * 0.5):
+                    stats.append(
+                        f"• {header[ci]}: сумма={sum(nums):.0f}, среднее={sum(nums)/len(nums):.1f}, "
+                        f"мин={min(nums):.0f}, макс={max(nums):.0f} (заполнено {len(vals)}/{len(body)})"
+                    )
+                else:
+                    top = Counter(str(v)[:40] for v in vals).most_common(6)
+                    top_s = "; ".join(f"{k}×{n}" for k, n in top)
+                    stats.append(f"• {header[ci]}: заполнено {len(vals)}/{len(body)}; частые: {top_s}")
+            sample = []
+            for r in body[:80]:
+                cells = [str(c) for c in r if c is not None]
                 if cells:
-                    rows.append(" | ".join(cells))
-            if rows:
-                parts.append(f"### Лист «{ws.title}» ({ws.max_row}×{ws.max_column})\n"
-                             + "\n".join(rows))
+                    sample.append(" | ".join(cells))
+            out.append(
+                f"### Лист «{ws.title}» — {len(body)} строк × {ncol} колонок\n"
+                f"Колонки: {' | '.join(header)}\n\n"
+                f"ИТОГИ ПО ВСЕЙ ТАБЛИЦЕ:\n" + "\n".join(stats)
+                + f"\n\nПРИМЕР СТРОК (первые {len(sample)} из {len(body)}):\n" + "\n".join(sample)
+            )
         wb.close()
-        return "\n\n".join(parts)[:20000]
+        return "\n\n".join(out)[:40000]
     except Exception as e:
         logger.error("XLSX extract: %s", e)
         return ""
@@ -1858,7 +1879,7 @@ async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
         raw = await llm.call_llm(
             [llm.sys_cached(INGEST_SYSTEM_PROMPT),
              {"role": "user",
-              "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:16000]}"}],
+              "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:40000]}"}],
             "opus48", temperature=0.2, max_tokens=1600,
             response_format={"type": "json_object"},
         )
@@ -2026,7 +2047,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "text/plain", "text/csv", "application/json",
             "application/xml", "text/markdown",
         ) or filename.lower().endswith((".txt", ".md", ".csv", ".json")):
-            content = data.decode("utf-8", errors="replace")[:20000]
+            content = data.decode("utf-8", errors="replace")[:50000]
             label = "Текст"
 
         else:
@@ -2398,7 +2419,7 @@ async def _handle_session_file(update: Update, context: ContextTypes.DEFAULT_TYP
         elif mime.startswith("image/"):
             content = await _vision_describe(data, filename)
         elif filename.lower().endswith((".txt", ".md", ".csv")):
-            content = data.decode("utf-8", errors="replace")[:20000]
+            content = data.decode("utf-8", errors="replace")[:50000]
         else:
             content = ""
 
