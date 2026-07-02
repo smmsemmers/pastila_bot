@@ -80,7 +80,7 @@ services:
   - type: worker
     name: pastila-gpt-remote
     runtime: node
-    plan: free
+    plan: starter
     rootDir: gpt-remote
     buildCommand: "npm install"
     startCommand: "npm start"
