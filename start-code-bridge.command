@@ -10,4 +10,6 @@
 
 cd "$HOME/pastila_bot" || exit 1
 echo "🚀 Поднимаю мост @pastila_code_remote_bot… (закрой окно, чтобы остановить)"
-caffeinate -dimsu claude --channels plugin:telegram@claude-plugins-official
+# --permission-mode auto: бридж действует без переспросов на обычных операциях
+# (чтение/разбор файлов), но с защитой от опасного — чтобы не зависал при работе через Telegram.
+caffeinate -dimsu claude --permission-mode auto --channels plugin:telegram@claude-plugins-official
