@@ -1928,14 +1928,15 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_archive = mime in ("application/zip", "application/x-zip-compressed") or fn.endswith(
         (".zip", ".tar", ".gz", ".rar", ".7z"))
     is_claude_export = fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json"))
-    if is_archive or is_claude_export:
+    if is_claude_export:
+        return  # маршрутизацию на бридж делает on_history_import (JSON, group 0)
+    if is_archive:
         await msg.reply_text(
-            "📦 Похоже на экспорт Claude или архив — я (task-бот) такое не разбираю.\n\n"
-            "Глубокий разбор по сессиям (вопросы, ответы, данные, артефакты) делает "
-            "💻 @pastila_code_remote_bot (Claude Code, на Opus 4.8):\n"
+            "📦 Похоже на архив — я (task-бот) такое не распаковываю.\n\n"
+            "Разбор архива/экспорта делает 💻 @pastila_code_remote_bot (Claude Code, Opus 4.8):\n"
             "1. Запусти бридж — двойной клик по <code>start-code-bridge.command</code>.\n"
-            "2. Кинь этот файл и напиши «разбери по сессиям».\n\n"
-            "А мне (@PastilaTaskBot) шли обычные документы, фото и голосовые — их разбираю сам.",
+            "2. Кинь файл и напиши «разбери».\n\n"
+            "А мне (@PastilaTaskBot) шли обычные документы, фото и голосовые.",
             parse_mode="HTML",
         )
         return
@@ -2561,6 +2562,19 @@ async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     doc = msg.document
     if not doc or not (doc.file_name or "").lower().endswith(".json"):
+        return
+    fn = (doc.file_name or "").lower()
+    # Экспорт Claude (conversations.json / data-*.json) — это НЕ история чата Telegram.
+    # Не пытаемся импортировать, а направляем на Claude Code (бридж).
+    if fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json")):
+        await msg.reply_text(
+            "📦 Это экспорт Claude — я (task-бот) его не разбираю.\n\n"
+            "Глубокий разбор по сессиям (вопросы, ответы, данные, артефакты) делает "
+            "💻 @pastila_code_remote_bot (Claude Code, Opus 4.8):\n"
+            "1. Запусти бридж — двойной клик по <code>start-code-bridge.command</code>.\n"
+            "2. Кинь файл и напиши «разбери по сессиям».",
+            parse_mode="HTML",
+        )
         return
     note = await msg.reply_text("📥 Загружаю историю чата…")
     try:
