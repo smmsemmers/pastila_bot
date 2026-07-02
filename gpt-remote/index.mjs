@@ -103,6 +103,22 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
 const botInfo = await bot.getMe();
 const botUsername = botInfo.username;
 
+// Регистрируем команды в Telegram, чтобы показывались в меню «/»
+try {
+  await bot.setMyCommands([
+    { command: "gpt", description: "Спросить (модель подберётся сама)" },
+    { command: "research", description: "🔎 Веб-поиск со ссылками" },
+    { command: "agent", description: "🤖 Глубокое исследование (Perplexity)" },
+    { command: "model", description: "⚙️ Выбрать GPT (5.5/5.4/mini)" },
+    { command: "ocr", description: "Текст с картинки" },
+    { command: "codex", description: "Codex CLI (если включён)" },
+    { command: "status", description: "Статус и модели" },
+    { command: "help", description: "Справка" },
+  ]);
+} catch (e) {
+  console.error("setMyCommands failed:", e.message);
+}
+
 console.log(
   `Pastila GPT Remote started as @${botUsername} | провайдер: ${
     USE_OPENROUTER ? "OpenRouter (авто-роутинг)" : "OpenAI:" + FALLBACK_MODEL
