@@ -2890,22 +2890,19 @@ async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json")):
         await _analyze_claude_export(update, context, doc)
         return
-    note = await msg.reply_text("📥 Загружаю историю чата…")
+    # Тихо проверяем: это вообще Telegram-экспорт (result.json)? Если нет
+    # (напр. memories.json / users.json из экспорта Claude) — молча выходим,
+    # такой файл разберёт обычный контент-анализатор (on_file) с саммари и кнопками.
     try:
         tg_file = await doc.get_file()
         raw = await tg_file.download_as_bytearray()
         data = json.loads(bytes(raw).decode("utf-8", "ignore"))
         imported = _parse_export(data)
-    except Exception as e:
-        logger.error("Импорт истории: %s", e)
-        await note.edit_text(
-            "⚠️ Не смог прочитать файл. Нужен result.json из экспорта Telegram "
-            "(Export chat history → формат Machine-readable JSON)."
-        )
+    except Exception:
         return
     if not imported:
-        await note.edit_text("В файле не нашёл сообщений. Проверь, что экспорт в формате JSON.")
         return
+    note = await msg.reply_text("📥 Загружаю историю чата…")
     existing = _CHAT_LOG.get(msg.chat_id, [])
     _CHAT_LOG[msg.chat_id] = (imported + existing)[-_LOG_MAX:]
     await note.edit_text(
