@@ -2703,6 +2703,98 @@ def _parse_export(data):
     return out
 
 
+def _parse_claude_export(raw: bytes) -> list:
+    """conversations.json из экспорта Claude → [{name, date, human, assistant}] по сессиям."""
+    d = json.loads(raw.decode("utf-8", "ignore"))
+    if not isinstance(d, list):
+        return []
+    out = []
+    for c in d:
+        if not isinstance(c, dict):
+            continue
+        human, asst = [], []
+        for m in c.get("chat_messages", []) or []:
+            t = (m.get("text") or "").strip()
+            if not t and isinstance(m.get("content"), list):
+                t = " ".join(x.get("text", "") for x in m["content"]
+                             if isinstance(x, dict) and x.get("text")).strip()
+            if not t:
+                continue
+            (human if m.get("sender") == "human" else asst).append(t)
+        if not (human or asst):
+            continue
+        out.append({
+            "name": c.get("name") or "(без названия)",
+            "date": (c.get("created_at") or "")[:10],
+            "human": " | ".join(human),
+            "assistant": " ".join(asst),
+        })
+    out.sort(key=lambda s: s["date"])
+    return out
+
+
+EXPORT_ANALYZE_PROMPT = (
+    "Ты разбираешь экспорт диалогов с Claude для Лены (бизнес по белёвской пастиле, партнёр Глеб). "
+    "Для КАЖДОЙ сессии выдай блок строго в формате:\n"
+    "## <НАЗВАНИЕ СЕССИИ>\n"
+    "Затем 2–4 предложения по-русски простыми словами: о чём сессия, что просили, что получилось/итог. "
+    "Иди по сессиям в том же порядке. Ничего не выдумывай — только по тексту."
+)
+
+
+async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
+    """Авто-разбор экспорта Claude по сессиям → файл с разбором в чат."""
+    msg = update.message
+    if not llm.OPENROUTER_API_KEY:
+        await msg.reply_text("🔇 Разбор выключен — не задан OPENROUTER_API_KEY.")
+        return
+    note = await msg.reply_text("📦 Экспорт Claude — скачиваю и разбираю по сессиям…")
+    try:
+        tg_file = await doc.get_file()
+        raw = await tg_file.download_as_bytearray()
+        sessions = await asyncio.to_thread(_parse_claude_export, bytes(raw))
+    except Exception as e:
+        logger.error("export parse: %s", e)
+        await note.edit_text(f"⚠️ Не смог прочитать экспорт: {e}")
+        return
+    if not sessions:
+        await note.edit_text("В экспорте не нашёл сессий с текстом.")
+        return
+
+    parts = []
+    for s in sessions:
+        parts.append(
+            f"СЕССИЯ: {s['name']} ({s['date']})\n"
+            f"ВОПРОСЫ: {s['human'][:700]}\nОТВЕТЫ: {s['assistant'][:700]}"
+        )
+    blob = "\n\n".join(parts)[:60000]
+
+    await note.edit_text(f"🧠 Разбираю {len(sessions)} сессий (Opus 4.8)…")
+    try:
+        result = await llm.call_llm(
+            [llm.sys_cached(EXPORT_ANALYZE_PROMPT),
+             {"role": "user", "content": blob}],
+            "opus48", temperature=0.2, max_tokens=8000,
+        )
+    except Exception as e:
+        logger.error("export analyze: %s", e)
+        await note.edit_text(f"⚠️ Ошибка разбора: {e}")
+        return
+
+    buf = io.BytesIO((result or "").encode("utf-8"))
+    buf.name = "Разбор_экспорта_Claude.md"
+    try:
+        await context.bot.send_document(
+            chat_id=msg.chat_id, document=buf, filename="Разбор_экспорта_Claude.md",
+            caption=f"📋 Разбор экспорта Claude: {len(sessions)} сессий",
+            message_thread_id=msg.message_thread_id,
+        )
+        await note.delete()
+    except Exception as e:
+        logger.error("export send: %s", e)
+        await note.edit_text((result or "")[:3900])
+
+
 async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Прислали result.json (экспорт чата) — грузим историю в память для /plan, /analyze, поиска."""
     msg = update.message
@@ -2710,17 +2802,9 @@ async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc or not (doc.file_name or "").lower().endswith(".json"):
         return
     fn = (doc.file_name or "").lower()
-    # Экспорт Claude (conversations.json / data-*.json) — это НЕ история чата Telegram.
-    # Не пытаемся импортировать, а направляем на Claude Code (бридж).
+    # Экспорт Claude (conversations.json / data-*.json) — сразу авто-разбор по сессиям.
     if fn == "conversations.json" or (fn.startswith("data-") and fn.endswith(".json")):
-        await msg.reply_text(
-            "📦 Это экспорт Claude — я (task-бот) его не разбираю.\n\n"
-            "Глубокий разбор по сессиям (вопросы, ответы, данные, артефакты) делает "
-            "💻 @pastila_code_remote_bot (Claude Code, Opus 4.8):\n"
-            "1. Запусти бридж — двойной клик по <code>start-code-bridge.command</code>.\n"
-            "2. Кинь файл и напиши «разбери по сессиям».",
-            parse_mode="HTML",
-        )
+        await _analyze_claude_export(update, context, doc)
         return
     note = await msg.reply_text("📥 Загружаю историю чата…")
     try:
