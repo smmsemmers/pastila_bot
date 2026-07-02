@@ -51,6 +51,8 @@ from google.oauth2.service_account import Credentials
 from telegram import (
     Update,
     BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
     ChatMember,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -4452,38 +4454,44 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------------
 async def _set_commands(app):
     """Регистрирует меню команд — всплывает подсказкой при вводе «/» в чате."""
+    commands = [
+        BotCommand("new", "Создать задачу"),
+        BotCommand("menu", "Меню действий"),
+        BotCommand("list", "Открытые задачи"),
+        BotCommand("status", "Сменить статус (ответом на задачу)"),
+        BotCommand("digest", "Дедлайны на сегодня"),
+        BotCommand("alerts", "Дедлайны на завтра"),
+        BotCommand("analyze", "Найти задачи в переписке"),
+        BotCommand("plan", "План работы для Лены и Глеба"),
+        BotCommand("q", "Быстро сохранить идею в базу знаний"),
+        BotCommand("dash", "Сводка: задачи, просрочены, KB"),
+        BotCommand("post", "Черновик поста для соцсетей"),
+        BotCommand("recurring", "Повторяющиеся задачи"),
+        BotCommand("remind_when", "Триггерное напоминание"),
+        BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
+        BotCommand("edit", "Изменить поле задачи (ответом на карточку)"),
+        BotCommand("tokens", "Статистика токенов и стоимость вызовов с запуска"),
+        BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
+        BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
+        BotCommand("pin", "Интерактивное описание группы с навигацией"),
+        BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
+        BotCommand("session", "Добавить сессию/лог в базу знаний"),
+        BotCommand("find", "Найти в базе знаний по теме или тегу"),
+        BotCommand("notion", "Синхронизировать Notion → база знаний"),
+        BotCommand("kb", "Показать базу знаний"),
+        BotCommand("id", "ID этого чата"),
+        BotCommand("cancel", "Отменить создание задачи"),
+        BotCommand("start", "Что умеет бот"),
+        BotCommand("help", "Что умеет бот"),
+        BotCommand("welcome", "Показать приветствие / проверить подключение"),
+    ] + llm.COMMANDS
+    # регистрируем во всех scope, чтобы меню «/» показывалось и в личке, и в группах
+    await app.bot.set_my_commands(commands)  # default scope
     await app.bot.set_my_commands(
-        [
-            BotCommand("new", "Создать задачу"),
-            BotCommand("menu", "Меню действий"),
-            BotCommand("list", "Открытые задачи"),
-            BotCommand("status", "Сменить статус (ответом на задачу)"),
-            BotCommand("digest", "Дедлайны на сегодня"),
-            BotCommand("alerts", "Дедлайны на завтра"),
-            BotCommand("analyze", "Найти задачи в переписке"),
-            BotCommand("plan", "План работы для Лены и Глеба"),
-            BotCommand("q", "Быстро сохранить идею в базу знаний"),
-            BotCommand("dash", "Сводка: задачи, просрочены, KB"),
-            BotCommand("post", "Черновик поста для соцсетей"),
-            BotCommand("recurring", "Повторяющиеся задачи"),
-            BotCommand("remind_when", "Триггерное напоминание"),
-            BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
-            BotCommand("edit", "Изменить поле задачи (ответом на карточку)"),
-            BotCommand("tokens", "Статистика токенов и стоимость вызовов с запуска"),
-            BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
-            BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
-            BotCommand("pin", "Интерактивное описание группы с навигацией"),
-            BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
-            BotCommand("session", "Добавить сессию/лог в базу знаний"),
-            BotCommand("find", "Найти в базе знаний по теме или тегу"),
-            BotCommand("notion", "Синхронизировать Notion → база знаний"),
-            BotCommand("kb", "Показать базу знаний"),
-            BotCommand("id", "ID этого чата"),
-            BotCommand("cancel", "Отменить создание задачи"),
-            BotCommand("start", "Что умеет бот"),
-            BotCommand("help", "Что умеет бот"),
-        ]
-        + llm.COMMANDS
+        commands, scope=BotCommandScopeAllGroupChats()
+    )
+    await app.bot.set_my_commands(
+        commands, scope=BotCommandScopeAllPrivateChats()
     )
 
 
