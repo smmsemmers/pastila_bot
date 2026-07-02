@@ -45,30 +45,31 @@ const FALLBACK_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // ── Маршрутизация: под каждый тип задачи — лучшая модель ───────────
 // Категорию текста определяет быстрый дешёвый классификатор,
 // картинки/OCR всегда идут на vision-модель.
+// Приоритет — качество, не экономия: под каждую задачу флагманская модель.
 const ROUTES = {
   chat: {
-    model: "anthropic/claude-sonnet-5",
-    label: "Claude Sonnet 5",
-    note: "универсал: диалог, тексты, структура",
-    maxTokens: 2000,
+    model: "anthropic/claude-opus-4.8",
+    label: "Claude Opus 4.8",
+    note: "флагман: диалог, тексты, структура",
+    maxTokens: 3000,
   },
   code: {
-    model: "openai/gpt-5.2-codex",
-    label: "GPT-5.2 Codex",
+    model: "openai/gpt-5.3-codex",
+    label: "GPT-5.3 Codex",
     note: "код, техника, отладка",
-    maxTokens: 4000,
-  },
-  reasoning: {
-    model: "openai/o3",
-    label: "o3",
-    note: "глубокий анализ, стратегия, планирование",
     maxTokens: 6000,
   },
+  reasoning: {
+    model: "openai/gpt-5.5",
+    label: "GPT-5.5",
+    note: "глубокий анализ, стратегия, планирование",
+    maxTokens: 8000,
+  },
   vision: {
-    model: "google/gemini-2.5-pro",
-    label: "Gemini 2.5 Pro",
+    model: "google/gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro",
     note: "OCR и разбор изображений",
-    maxTokens: 3000,
+    maxTokens: 4000,
   },
 };
 
@@ -382,10 +383,10 @@ bot.on("message", async (msg) => {
           USE_OPENROUTER
             ? "Модель подбирается автоматически под задачу (OpenRouter):"
             : `Модель: ${FALLBACK_MODEL}`,
-          USE_OPENROUTER ? "• текст → Claude Sonnet 5" : "",
-          USE_OPENROUTER ? "• код → GPT-5.2 Codex" : "",
-          USE_OPENROUTER ? "• анализ/стратегия → o3" : "",
-          USE_OPENROUTER ? "• картинки/OCR → Gemini 2.5 Pro" : "",
+          USE_OPENROUTER ? "• текст → Claude Opus 4.8" : "",
+          USE_OPENROUTER ? "• код → GPT-5.3 Codex" : "",
+          USE_OPENROUTER ? "• анализ/стратегия → GPT-5.5" : "",
+          USE_OPENROUTER ? "• картинки/OCR → Gemini 3.1 Pro" : "",
           "",
           "Команды:",
           "/status — статус и карта моделей",
