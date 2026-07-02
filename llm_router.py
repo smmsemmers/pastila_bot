@@ -325,6 +325,9 @@ async def call_llm(messages, model_id, *, temperature=0.2, max_tokens=1200,
                    response_format=None, timeout=120, thinking_budget=0):
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY не задан")
+    # принимаем и алиас (opus48), и полный id (anthropic/claude-opus-4.8)
+    if model_id in MODELS:
+        model_id = MODELS[model_id]["id"]
     payload = {
         "model": model_id,
         "messages": messages,
