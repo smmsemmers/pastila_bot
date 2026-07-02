@@ -1,0 +1,17 @@
+{
+  "name": "pastila-gpt-remote",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^1.1.1",
+    "openai": "^4.104.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

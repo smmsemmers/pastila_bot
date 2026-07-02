@@ -1,0 +1,8 @@
+# local secrets & deps
+node_modules/
+.env
+.envy
+
+# root .gitignore excludes *.json — re-include the manifests we DO want tracked
+!package.json
+!package-lock.json
