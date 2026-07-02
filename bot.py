@@ -2795,13 +2795,13 @@ EXPORT_ANALYZE_PROMPT = (
 )
 
 
+_EXPORT_STASH: dict[int, list] = {}  # message_id списка → сессии экспорта
+
+
 async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_TYPE, doc):
-    """Авто-разбор экспорта Claude по сессиям → файл с разбором в чат."""
+    """Экспорт Claude → сразу список названий сессий + кнопка «Разобрать все»."""
     msg = update.message
-    if not llm.OPENROUTER_API_KEY:
-        await msg.reply_text("🔇 Разбор выключен — не задан OPENROUTER_API_KEY.")
-        return
-    note = await msg.reply_text("📦 Экспорт Claude — скачиваю и разбираю по сессиям…")
+    note = await msg.reply_text("📦 Экспорт Claude — читаю список сессий…")
     try:
         tg_file = await doc.get_file()
         raw = await tg_file.download_as_bytearray()
@@ -2814,6 +2814,20 @@ async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_T
         await note.edit_text("В экспорте не нашёл сессий с текстом.")
         return
 
+    lines = [f"🗂 <b>Экспорт Claude — {len(sessions)} сессий</b>", ""]
+    for i, s in enumerate(sessions[:100], 1):
+        d = f" · {s['date']}" if s.get("date") else ""
+        lines.append(f"{i}. {html.escape(s['name'][:70])}{d}")
+    if len(sessions) > 100:
+        lines.append(f"…и ещё {len(sessions) - 100}")
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📋 Разобрать все сессии", callback_data="exp::all"),
+    ]])
+    sent = await note.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+    _EXPORT_STASH[sent.message_id] = sessions
+
+
+async def _run_export_breakdown(sessions: list) -> str:
     parts = []
     for s in sessions:
         parts.append(
@@ -2821,31 +2835,45 @@ async def _analyze_claude_export(update: Update, context: ContextTypes.DEFAULT_T
             f"ВОПРОСЫ: {s['human'][:700]}\nОТВЕТЫ: {s['assistant'][:700]}"
         )
     blob = "\n\n".join(parts)[:60000]
+    return await llm.call_llm(
+        [llm.sys_cached(EXPORT_ANALYZE_PROMPT), {"role": "user", "content": blob}],
+        "opus48", temperature=0.2, max_tokens=8000,
+    )
 
-    await note.edit_text(f"🧠 Разбираю {len(sessions)} сессий (Opus 4.8)…")
-    try:
-        result = await llm.call_llm(
-            [llm.sys_cached(EXPORT_ANALYZE_PROMPT),
-             {"role": "user", "content": blob}],
-            "opus48", temperature=0.2, max_tokens=8000,
-        )
-    except Exception as e:
-        logger.error("export analyze: %s", e)
-        await note.edit_text(f"⚠️ Ошибка разбора: {e}")
+
+async def on_export_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка «Разобрать все сессии» под списком экспорта."""
+    query = update.callback_query
+    sessions = _EXPORT_STASH.get(query.message.message_id)
+    if not sessions:
+        await query.answer("Список устарел — пришли экспорт заново.", show_alert=True)
         return
-
+    if not llm.OPENROUTER_API_KEY:
+        await query.answer("Нет OPENROUTER_API_KEY.", show_alert=True)
+        return
+    await query.answer("Разбираю…")
+    wait = await context.bot.send_message(
+        query.message.chat_id, f"🧠 Разбираю {len(sessions)} сессий (Opus 4.8)…",
+        message_thread_id=query.message.message_thread_id,
+    )
+    try:
+        result = await _run_export_breakdown(sessions)
+    except Exception as e:
+        logger.error("export breakdown: %s", e)
+        await wait.edit_text(f"⚠️ Ошибка разбора: {e}")
+        return
     buf = io.BytesIO((result or "").encode("utf-8"))
     buf.name = "Разбор_экспорта_Claude.md"
     try:
         await context.bot.send_document(
-            chat_id=msg.chat_id, document=buf, filename="Разбор_экспорта_Claude.md",
-            caption=f"📋 Разбор экспорта Claude: {len(sessions)} сессий",
-            message_thread_id=msg.message_thread_id,
+            chat_id=query.message.chat_id, document=buf, filename="Разбор_экспорта_Claude.md",
+            caption=f"📋 Разбор экспорта: {len(sessions)} сессий",
+            message_thread_id=query.message.message_thread_id,
         )
-        await note.delete()
+        await wait.delete()
     except Exception as e:
         logger.error("export send: %s", e)
-        await note.edit_text((result or "")[:3900])
+        await wait.edit_text((result or "")[:3900])
 
 
 async def on_history_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4640,6 +4668,7 @@ def main():
     app.add_handler(CallbackQueryHandler(on_save_memo, pattern="^savememo::"))
     app.add_handler(CallbackQueryHandler(on_content_task, pattern="^ctask::"))
     app.add_handler(CallbackQueryHandler(on_file_action, pattern="^fa::"))
+    app.add_handler(CallbackQueryHandler(on_export_action, pattern="^exp::"))
     app.add_handler(CommandHandler("tokens", cmd_tokens))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("strategy", cmd_strategy))
