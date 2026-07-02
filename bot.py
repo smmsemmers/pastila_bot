@@ -1381,6 +1381,8 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # если ждём аудио-контент сессии — перехватываем
     if await _handle_session_file(update, context):
         return
+    if BRIDGE_PRIMARY:
+        return  # голос расшифровывает бридж (главный); task-бот на голос молчит
     if not OPENAI_API_KEY:
         return  # нет Whisper — молчим
     if not llm.OPENROUTER_API_KEY:
