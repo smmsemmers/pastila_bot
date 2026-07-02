@@ -348,29 +348,35 @@ const AGENT_SYSTEM =
   "источники между собой, и выдай итог. Структура ответа по-русски: 1) короткий вывод; " +
   "2) что нашёл по пунктам с цифрами; 3) что делать дальше (рекомендации). Не выдумывай, опирайся на источники.";
 
-// mode: "research" (сфокусированный поиск) | "agent" (глубже, шире, с рекомендациями)
+// Настоящий deep-research AI (сам ищет в вебе, читает источники, пишет отчёт)
+const DEEP_RESEARCH_MODEL = "perplexity/sonar-deep-research";
+
+// mode: "research" — быстрый веб-поиск выбранной GPT; "agent" — глубокое исследование (Perplexity)
 async function webWork(query, chatId, mode) {
-  const model = pickModel(chatId).id;
   const isAgent = mode === "agent";
-  const resp = await llm.chat.completions.create({
+  const model = isAgent ? DEEP_RESEARCH_MODEL : pickModel(chatId).id;
+  const params = {
     model,
-    max_tokens: isAgent ? 8000 : 6000,
-    plugins: [{ id: "web", max_results: isAgent ? 15 : 8 }],
+    max_tokens: isAgent ? 9000 : 6000,
     messages: [
       { role: "system", content: isAgent ? AGENT_SYSTEM : RESEARCH_SYSTEM },
       { role: "user", content: query },
     ],
-  });
+  };
+  // GPT нужен веб-плагин; Perplexity ищет в интернете сама.
+  if (!isAgent) params.plugins = [{ id: "web", max_results: 8 }];
+
+  const resp = await llm.chat.completions.create(params);
   const msg = resp.choices?.[0]?.message || {};
   const text = (msg.content || "").trim() || "Не удалось получить ответ.";
   const seen = new Set();
   const sources = [];
-  for (const a of msg.annotations || []) {
-    const u = a.url_citation || a;
-    if (u.url && !seen.has(u.url)) {
-      seen.add(u.url);
-      sources.push({ url: u.url, title: (u.title || u.url).slice(0, 80) });
-    }
+  const add = (url, title) => {
+    if (url && !seen.has(url)) { seen.add(url); sources.push({ url, title: (title || url).slice(0, 80) }); }
+  };
+  for (const a of msg.annotations || []) { const u = a.url_citation || a; add(u.url, u.title); }
+  for (const c of resp.citations || []) {
+    if (typeof c === "string") add(c, c); else add(c?.url, c?.title);
   }
   return { text, sources, model };
 }
@@ -445,8 +451,8 @@ bot.on("message", async (msg) => {
           "/status — статус и карта моделей",
           "/gpt текст — спросить (модель выберется сама)",
           "/research вопрос — 🔎 веб-поиск (GPT + интернет, со ссылками)",
-          "/agent задача — 🤖 агент: ищет с разных сторон + рекомендации",
-          "/model — выбрать GPT (5.5/5.4/mini) для экономии токенов",
+          "/agent задача — 🤖 глубокое исследование (Perplexity, отчёт+источники, ~1-2 мин)",
+          "/model — выбрать GPT для /research (5.5/5.4/mini, экономия токенов)",
           "/ocr + картинка — извлечь текст с картинки",
           "/codex задача — запустить Codex CLI, если включён",
           "",
@@ -532,7 +538,7 @@ bot.on("message", async (msg) => {
       await bot.sendChatAction(chatId, "typing");
       const mlabel = pickModel(chatId).label.split(" —")[0];
       const wait = await bot.sendMessage(chatId,
-        mode === "agent" ? `🤖 Агент работает (${mlabel} + веб, несколько углов)…`
+        mode === "agent" ? "🤖 Deep research (Perplexity Sonar) — копаю глубоко, ~1–2 мин…"
                          : `🔎 Ищу в интернете (${mlabel} + deep search)…`);
       try {
         const { text, sources } = await webWork(q, chatId, mode);
