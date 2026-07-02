@@ -103,18 +103,21 @@ const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
 const botInfo = await bot.getMe();
 const botUsername = botInfo.username;
 
-// Регистрируем команды в Telegram, чтобы показывались в меню «/»
+// Регистрируем команды в Telegram, чтобы показывались в меню «/» (и в личке, и в группах)
+const BOT_COMMANDS = [
+  { command: "gpt", description: "Спросить (модель подберётся сама)" },
+  { command: "research", description: "🔎 Веб-поиск со ссылками" },
+  { command: "agent", description: "🤖 Глубокое исследование (Perplexity)" },
+  { command: "model", description: "⚙️ Выбрать GPT (5.5/5.4/mini)" },
+  { command: "ocr", description: "Текст с картинки" },
+  { command: "codex", description: "Codex CLI (если включён)" },
+  { command: "status", description: "Статус и модели" },
+  { command: "help", description: "Справка" },
+];
 try {
-  await bot.setMyCommands([
-    { command: "gpt", description: "Спросить (модель подберётся сама)" },
-    { command: "research", description: "🔎 Веб-поиск со ссылками" },
-    { command: "agent", description: "🤖 Глубокое исследование (Perplexity)" },
-    { command: "model", description: "⚙️ Выбрать GPT (5.5/5.4/mini)" },
-    { command: "ocr", description: "Текст с картинки" },
-    { command: "codex", description: "Codex CLI (если включён)" },
-    { command: "status", description: "Статус и модели" },
-    { command: "help", description: "Справка" },
-  ]);
+  await bot.setMyCommands(BOT_COMMANDS); // default scope
+  await bot.setMyCommands(BOT_COMMANDS, { scope: { type: "all_group_chats" } });
+  await bot.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } });
 } catch (e) {
   console.error("setMyCommands failed:", e.message);
 }
