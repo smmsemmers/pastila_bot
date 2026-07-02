@@ -1824,17 +1824,21 @@ async def _summarize_content(content: str, title: str) -> str:
 
 # ── Единый разбор присланного контента (тема, актуальность, саммари, задачи) ──
 INGEST_SYSTEM_PROMPT = (
-    "Ты помощник Лены в бизнесе по белёвской пастиле (проект Pastila OS; партнёр — Глеб). "
+    "Ты — ИИ-аналитик Лены в бизнесе по белёвской пастиле (проект Pastila OS; партнёр — Глеб). "
     "Лена не всегда в курсе всех дел Глеба, поэтому объясняй ПРОСТО, ЧЁТКО и по делу. "
-    "Тебе дают контент из рабочего чата (документ, расшифровку голоса, описание фото). "
+    "Тебе дают контент из рабочего чата (документ, таблицу, расшифровку голоса, описание фото). "
+    "Твоя задача — не просто пересказать, а ПРОАНАЛИЗИРОВАТЬ и ПРЕДЛОЖИТЬ, что с этим делать. "
     "Верни СТРОГО JSON с полями:\n"
     '- "topic": одна тема из списка [' + ", ".join(CONTENT_TOPICS) + "] — к чему это относится;\n"
     '- "actuality": "высокая" | "средняя" | "низкая" — насколько это важно/срочно для дела сейчас;\n'
     '- "title": короткий понятный заголовок (до 60 символов);\n'
-    '- "summary": понятное структурное саммари для Лены простыми словами: что это, о чём, '
-    "что главное и что с этим делать. Короткими пунктами, без канцелярита и воды. "
-    "Если это таблица или цифры — поясни, что они означают;\n"
-    '- "tasks": массив (максимум 3) конкретных задач/поручений, если они есть в контенте. '
+    '- "summary": понятное структурное саммари простыми словами: что это, о чём, что главное. '
+    "Короткими пунктами, без канцелярита и воды. Если это таблица/цифры — поясни, что они означают "
+    "и что в них видно (закономерности, проблемы, аномалии);\n"
+    '- "recommendations": массив (2–4) КОНКРЕТНЫХ рекомендаций — что стоит сделать с этими данными/'
+    "документом: какие выводы, какие следующие шаги, на что обратить внимание, где риск или возможность. "
+    "Как советник, а не пересказчик. Каждая рекомендация — одна короткая фраза действия;\n"
+    '- "tasks": массив (максимум 3) конкретных задач/поручений, если их стоит завести. '
     "Каждая: {title, who, deadline, dod, steps, tags, status}. "
     'who — «Лена»/«Глеб»/«Лена + Глеб»/""; deadline — ДД.ММ или ""; steps — массив строк; '
     'tags — массив слов без #; status всегда "NEW". Если задач нет — [].\n'
@@ -1846,7 +1850,8 @@ async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
     """Разбор присланного контента флагманом (Opus 4.8):
     тема, актуальность, понятное саммари и задачи. Возвращает dict."""
     fallback = {"topic": "прочее", "actuality": "средняя",
-                "title": (title or "Контент")[:80], "summary": "", "tasks": []}
+                "title": (title or "Контент")[:80], "summary": "",
+                "recommendations": [], "tasks": []}
     if not llm.OPENROUTER_API_KEY or len((content or "").strip()) < 30:
         return fallback
     try:
@@ -1854,7 +1859,7 @@ async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
             [llm.sys_cached(INGEST_SYSTEM_PROMPT),
              {"role": "user",
               "content": f"Тип: {kind}. Заголовок: «{title}».\n\nСодержимое:\n{content[:16000]}"}],
-            "opus48", temperature=0.2, max_tokens=1200,
+            "opus48", temperature=0.2, max_tokens=1600,
             response_format={"type": "json_object"},
         )
         obj = llm.loads_loose(raw)
@@ -1867,9 +1872,12 @@ async def _ingest_analyze(content: str, kind: str, title: str) -> dict:
         if act not in ("высокая", "средняя", "низкая"):
             act = "средняя"
         tasks = obj.get("tasks") if isinstance(obj.get("tasks"), list) else []
+        tasks = [t for t in tasks if isinstance(t, dict)]  # только объекты — строки отбрасываем
+        recs = obj.get("recommendations") if isinstance(obj.get("recommendations"), list) else []
         return {"topic": topic, "actuality": act,
                 "title": (str(obj.get("title") or title or "Контент"))[:80],
                 "summary": str(obj.get("summary", "")).strip(),
+                "recommendations": [str(r).strip() for r in recs if str(r).strip()][:4],
                 "tasks": tasks[:3]}
     except Exception as e:
         logger.error("_ingest_analyze: %s", e)
@@ -2064,12 +2072,16 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        # В чат — понятное саммари (то, что должна видеть Лена)
-        header = (f"📄 «{analysis['title']}»\n"
-                  f"🏷 #{topic} · {_ACT_ICON.get(act, '🟡')} актуальность: {act}")
-        body = f"\n\n{summary}" if summary else ""
-        note = "" if added else "\n\n_(уже было в базе)_"
-        await status_msg.edit_text(header + body + note)
+        # В чат — понятное саммари + рекомендации (что делать с этим)
+        esc = html.escape
+        header = (f"📄 «{esc(analysis['title'])}»\n"
+                  f"🏷 #{esc(topic)} · {_ACT_ICON.get(act, '🟡')} актуальность: {act}")
+        body = f"\n\n{esc(summary)}" if summary else ""
+        recs = analysis.get("recommendations") or []
+        recs_block = ("\n\n💡 <b>Что я предлагаю сделать:</b>\n"
+                      + "\n".join(f"• {esc(r)}" for r in recs)) if recs else ""
+        note = "" if added else "\n\n<i>(уже было в базе)</i>"
+        await status_msg.edit_text(header + body + recs_block + note, parse_mode="HTML")
 
         # Найденные задачи → предложить завести
         tasks = analysis.get("tasks") or []
