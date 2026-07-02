@@ -4037,19 +4037,9 @@ def main():
 
     async def _post_init(application):
         await _set_commands(application)
-        # Отправляем /pin в группу при каждом старте — обновляет закреплённое сообщение
-        if GROUP_CHAT_ID:
-            try:
-                await application.bot.send_message(
-                    chat_id=GROUP_CHAT_ID,
-                    text=PIN_MAIN_TEXT,
-                    parse_mode="HTML",
-                    reply_markup=pin_main_keyboard(),
-                    disable_web_page_preview=True,
-                )
-                logger.info("Стартовый /pin отправлен в группу.")
-            except Exception as e:
-                logger.warning("Не смог отправить стартовый /pin: %s", e)
+        # Баннер /pin НЕ отправляем на старте: на Render воркер перезапускается при
+        # каждом деплое (и иногда сам по себе), из-за чего баннер спамил группу.
+        # Обновить закреплённое сообщение теперь можно вручную командой /pin.
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
