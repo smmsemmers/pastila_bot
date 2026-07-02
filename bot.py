@@ -2080,6 +2080,81 @@ async def _download_tg_file(bot, file_id: str) -> bytes:
     return buf.getvalue()
 
 
+async def _read_file_content(context, file_id, filename, mime):
+    """Скачивает файл и извлекает текст. Возвращает (label, content)."""
+    data = await _download_tg_file(context.bot, file_id)
+    fn = (filename or "").lower()
+    mime = (mime or "").lower()
+    if mime == "application/pdf" or fn.endswith(".pdf"):
+        return "PDF", await asyncio.to_thread(_extract_pdf, data)
+    if "wordprocessingml.document" in mime or fn.endswith(".docx"):
+        return "DOCX", await asyncio.to_thread(_extract_docx, data)
+    if "spreadsheetml.sheet" in mime or mime == "application/vnd.ms-excel" \
+            or fn.endswith((".xlsx", ".xls")):
+        return "Таблица", await asyncio.to_thread(_extract_xlsx, data)
+    if mime.startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
+        return "Изображение", await _vision_describe(data, filename)
+    if mime.startswith("audio/") or mime == "video/ogg" \
+            or fn.endswith((".ogg", ".mp3", ".wav", ".m4a")):
+        return "Аудио", (await _whisper_transcribe(data) if OPENAI_API_KEY else "")
+    if mime in ("text/plain", "text/csv", "application/json", "application/xml",
+                "text/markdown") or fn.endswith((".txt", ".md", ".csv", ".json")):
+        return "Текст", data.decode("utf-8", errors="replace")[:50000]
+    return None, ""
+
+
+_FILE_BATCH: dict[str, dict] = {}  # media_group_id → пакет файлов альбома
+
+
+async def _batch_add(context, msg, file_id, filename, mime):
+    """Копит файлы альбома и через паузу разбирает их вместе (дебаунс)."""
+    mgid = str(msg.media_group_id)
+    b = _FILE_BATCH.setdefault(
+        mgid, {"chat_id": msg.chat_id, "thread": msg.message_thread_id, "items": [], "job": None})
+    b["items"].append((file_id, filename, mime))
+    if b["job"] and not b["job"].done():
+        b["job"].cancel()
+    b["job"] = asyncio.create_task(_batch_run(context, mgid))
+
+
+async def _batch_run(context, mgid):
+    try:
+        await asyncio.sleep(2.5)  # ждём, пока долетят все файлы альбома
+    except asyncio.CancelledError:
+        return
+    b = _FILE_BATCH.pop(mgid, None)
+    if not b or not b["items"]:
+        return
+    chat_id, thread, items = b["chat_id"], b["thread"], b["items"]
+    note = await context.bot.send_message(
+        chat_id, f"📦 Получила {len(items)} файлов — читаю и анализирую вместе…",
+        message_thread_id=thread)
+    parts = []
+    for file_id, filename, mime in items:
+        try:
+            label, content = await _read_file_content(context, file_id, filename, mime)
+            if content and content.strip():
+                parts.append(f"=== ФАЙЛ: {filename or label} ({label}) ===\n{content[:8000]}")
+        except Exception as e:
+            logger.error("batch read %s: %s", filename, e)
+    if not parts:
+        await note.edit_text("Не смог прочитать файлы из альбома.")
+        return
+    combined = "\n\n".join(parts)[:40000]
+    analysis = await _ingest_analyze(combined, "несколько файлов", f"Пакет из {len(items)} файлов")
+    esc = html.escape
+    topic, act = analysis["topic"], analysis["actuality"]
+    header = (f"📦 <b>Пакет: {len(items)} файлов</b>\n"
+              f"🏷 #{esc(topic)} · {_ACT_ICON.get(act, '🟡')} актуальность: {act}")
+    body = f"\n\n{esc(analysis['summary'])}" if analysis.get("summary") else ""
+    recs = analysis.get("recommendations") or []
+    recs_block = ("\n\n💡 <b>Что предлагаю:</b>\n"
+                  + "\n".join(f"• {esc(r)}" for r in recs)) if recs else ""
+    sent = await note.edit_text(header + body + recs_block, parse_mode="HTML",
+                                reply_markup=_file_actions_keyboard())
+    _FILE_STASH[sent.message_id] = {"content": combined, "title": f"Пакет из {len(items)} файлов"}
+
+
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Авто-обработка файлов/фото в группе → извлечение текста → база знаний."""
     # если ждём контент сессии — передаём туда
@@ -2112,6 +2187,11 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Пропускаем > 20 МБ (Telegram limit) и уже виденные
     if size > 20 * 1024 * 1024:
+        return
+
+    # Альбом (несколько файлов одним сообщением) → собираем и разбираем ВМЕСТЕ
+    if msg.media_group_id:
+        await _batch_add(context, msg, file_id, filename, mime)
         return
 
     # ── Маршрутизация: экспорт Claude / архив — не ко мне, а к Claude Code ──
