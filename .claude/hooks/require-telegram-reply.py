@@ -6,10 +6,17 @@
 Печатает {"decision":"block","reason":...} чтобы заставить продолжить, либо ничего.
 """
 import json
+import re
 import sys
 
 REPLY_TOOL = "mcp__plugin_telegram_telegram__reply"
 TG_MARKER = "plugin:telegram:telegram"
+# входящие от этих аккаунтов — боты (дайджесты/алерты/эхо), ответа в чат не требуют
+BOT_USERS = {
+    "pastilataskbot",
+    "pastila_gpt_remote_bot",
+    "pastila_code_remote_bot",
+}
 
 
 def load_lines(path):
