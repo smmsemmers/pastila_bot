@@ -109,13 +109,21 @@ def main():
 
     turn = entries[boundary:]
 
-    # был ли во входящем этого хода Telegram-месседж?
-    inbound_tg = any(
-        e.get("type") == "user" and TG_MARKER in text_of(e)
-        for e in turn
-    )
+    # был ли во входящем этого хода Telegram-месседж ОТ ЖИВОГО пользователя
+    # (не от бота — дайджесты/алерты @PastilaTaskBot и т.п. ответа не требуют)
+    def from_real_user(e):
+        if e.get("type") != "user":
+            return False
+        t = text_of(e)
+        if TG_MARKER not in t:
+            return False
+        users = re.findall(r'user="([^"]+)"', t)
+        # хотя бы один автор — не бот
+        return any(u.strip().lower() not in BOT_USERS for u in users) if users else True
+
+    inbound_tg = any(from_real_user(e) for e in turn)
     if not inbound_tg:
-        return  # не из Telegram — ничего не навязываем
+        return  # не из Telegram или только от ботов — ничего не навязываем
 
     # был ли вызов reply в этом ходе?
     replied = any(e.get("type") == "assistant" and used_reply(e) for e in turn)
