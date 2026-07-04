@@ -107,6 +107,7 @@ const botUsername = botInfo.username;
 const BOT_COMMANDS = [
   { command: "gpt", description: "Спросить (модель подберётся сама)" },
   { command: "research", description: "🔎 Веб-поиск со ссылками" },
+  { command: "deep", description: "🔎 Веб-поиск со ссылками (то же, что /research)" },
   { command: "agent", description: "🤖 Глубокое исследование (Perplexity)" },
   { command: "model", description: "⚙️ Выбрать GPT (5.5/5.4/mini)" },
   { command: "ocr", description: "Текст с картинки" },
