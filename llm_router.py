@@ -711,6 +711,7 @@ COMMANDS = [
 
 def register(app):
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CommandHandler("fable", cmd_fable))
     app.add_handler(CommandHandler("trim", cmd_trim))
     app.add_handler(CallbackQueryHandler(on_model_pick, pattern="^pm::"))
     app.add_handler(CallbackQueryHandler(on_trim_pick, pattern="^tl::"))
