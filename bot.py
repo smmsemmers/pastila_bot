@@ -2337,7 +2337,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         note = "" if added else "\n\n<i>(уже было в базе)</i>"
         # разбор + 10 кнопок анализа под файлом (ничего скрытого — всё видно)
         await status_msg.edit_text(
-            header + body + recs_block + note,
+            header + body + recs_block + note + "\n\n🧠 разбор файла · Claude Opus 4.8",
             parse_mode="HTML", reply_markup=_file_actions_keyboard(),
         )
         _FILE_STASH[status_msg.message_id] = {"content": content, "title": analysis["title"]}
