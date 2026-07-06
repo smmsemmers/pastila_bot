@@ -1457,7 +1457,7 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error("Голос/план: %s", e)
             await status_msg.edit_text("⚠️ Не получилось составить план. Попробуй позже.")
             return
-        chunks = _chunks(plan.strip() or "Пусто.")
+        chunks = _chunks((plan.strip() or "Пусто.") + llm.badge("plan", label, is_auto))
         await status_msg.edit_text(chunks[0])
         for ch in chunks[1:]:
             await msg.reply_text(ch)
