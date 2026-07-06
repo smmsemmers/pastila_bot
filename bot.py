@@ -2051,7 +2051,7 @@ async def on_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await wait.edit_text(f"⚠️ Не смог: {e}")
         return
     text = f"{label} · «{stash['title']}»\n\n{(out or '').strip()}"
-    await wait.edit_text(text[:3850] + "\n\n🧠 Claude Opus 4.8")
+    await wait.edit_text(text[:3850] + f"\n\n🧠 {llm.key_label(fa_key)}")
 
 
 async def on_content_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
