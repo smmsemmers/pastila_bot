@@ -578,9 +578,9 @@ def _context_status_text(chat_id):
 
 # ───────────────────────── команды и коллбэки ─────────────────────────
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    task = (context.args[0].lower() if context.args else "plan")
+    task = (context.args[0].lower() if context.args else "default")
     if task not in TASK_RECOMMENDED:
-        task = "plan"
+        task = "default"
     chat_id = update.effective_chat.id
     ck = model_key_for(chat_id, task)
     price = key_price(ck)
