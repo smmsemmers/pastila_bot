@@ -683,9 +683,28 @@ async def on_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await runner(update, context, pending)
 
 
+async def cmd_fable(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/fable — быстрый тумблер: общение на Claude Fable 5 ↔ обратно на Opus 4.8."""
+    chat_id = update.effective_chat.id
+    cur = model_key_for(chat_id, "default")
+    if cur == "fable5":
+        set_model(chat_id, "default", "opus48")
+        await _persist()
+        await update.message.reply_text(
+            "↩️ Общение снова на Claude Opus 4.8 ($5/$25 за 1M). "
+            "Жми /fable, чтобы вернуть Fable 5.")
+    else:
+        set_model(chat_id, "default", "fable5")
+        await _persist()
+        await update.message.reply_text(
+            "✨ Общение переключено на Claude Fable 5 ($10/$50 за 1M) — "
+            "живее и выразительнее. Жми /fable, чтобы вернуть Opus 4.8.")
+
+
 # ───────────────────────── подключение к приложению ─────────────────────────
 COMMANDS = [
     BotCommand("model", "Выбрать LLM (рекомендация / Авто / выбор)"),
+    BotCommand("fable", "Общение: Fable 5 ↔ Opus 4.8 (быстрый тумблер)"),
     BotCommand("trim", "Контекст: обрезка 0–10 или умное сжатие"),
 ]
 
