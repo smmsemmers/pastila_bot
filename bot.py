@@ -2412,6 +2412,7 @@ async def _run_analyze(update, context, pending):
     await note.edit_text(
         f"Нашёл задач: {len(tasks)}. Ниже черновики — выбери статус, чтобы завести "
         "(или «Пропустить»):"
+        + llm.badge("analyze", label, is_auto)
     )
     for parsed in tasks[:5]:
         data = _draft_from_parsed(parsed)
