@@ -2035,6 +2035,8 @@ async def on_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query.message.chat_id, f"{label} — секунду…",
         message_thread_id=query.message.message_thread_id,
     )
+    # «Разбор» (key=analyze) — авто-эскалация в Opus 4.8; остальные кнопки — Sonnet 4.6
+    fa_key = "opus48" if key == "analyze" else "sonnet46"
     try:
         out = await llm.call_llm(
             [{"role": "system", "content":
@@ -2042,7 +2044,7 @@ async def on_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
               "Отвечай по-русски, структурно и по делу, без воды."},
              {"role": "user", "content":
               f"{prompt}\n\nФайл: «{stash['title']}».\n\nСодержимое:\n{stash['content'][:40000]}"}],
-            "opus48", temperature=0.2, max_tokens=2000,
+            fa_key, temperature=0.2, max_tokens=2000,
         )
     except Exception as e:
         logger.error("file action %s: %s", key, e)
