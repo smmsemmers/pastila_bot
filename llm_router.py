@@ -168,7 +168,7 @@ TASK_RECOMMENDED = {
     "voice_route": "gpt4omini",
     "analyze":     "gpt4omini",
     "plan":        "sonnet46",
-    "default":     "gpt4omini",
+    "default":     "fable5",
 }
 
 # ───────── состояние выбора (память процесса + персистентность) ─────────
