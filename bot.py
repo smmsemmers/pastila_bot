@@ -126,7 +126,7 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "whisper-1")
 # NOTION_PAGES — page_id через запятую; если пусто — sync берёт все accessible pages
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
 NOTION_PAGES = [p.strip() for p in os.environ.get("NOTION_PAGES", "").split(",") if p.strip()]
-VISION_MODEL_KEY = os.environ.get("VISION_MODEL", "haiku45")  # модель для описания картинок
+VISION_MODEL_KEY = os.environ.get("VISION_MODEL", "gemini31fl")  # модель для описания картинок (low-latency multimodal)
 
 # Детектор важных мыслей
 # INSIGHT_NOTIFY=true  → бот пишет короткий комментарий в чат
