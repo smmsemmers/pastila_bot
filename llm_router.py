@@ -164,11 +164,14 @@ TIER_TITLE = {
 
 AUTO_KEY = "auto"
 
+# Матрица моделей по функциям (по «Оптимальной схеме выбора моделей», 06.07.2026):
+# чат=Sonnet 4.6 (умный дефолт), голос/инсайты=GPT-5.4 nano (дёшево),
+# analyze=GPT-5.4 mini, plan=Sonnet 4.6. Разбор файла/стратегия/deep=Opus 4.8 (в коде).
 TASK_RECOMMENDED = {
-    "voice_route": "gpt4omini",
-    "analyze":     "gpt4omini",
+    "voice_route": "gpt54nano",
+    "analyze":     "gpt54mini",
     "plan":        "sonnet46",
-    "default":     "opus48",
+    "default":     "sonnet46",
 }
 
 # ───────── состояние выбора (память процесса + персистентность) ─────────
