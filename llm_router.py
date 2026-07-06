@@ -578,20 +578,53 @@ def _context_status_text(chat_id):
 
 # ───────────────────────── команды и коллбэки ─────────────────────────
 async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    task = (context.args[0].lower() if context.args else "default")
-    if task not in TASK_RECOMMENDED:
-        task = "default"
     chat_id = update.effective_chat.id
+    arg = (context.args[0].lower() if context.args else "")
     task_names = {"default": "общение", "plan": "планы", "analyze": "разбор", "voice_route": "голос"}
-    task_ru = task_names.get(task, task)
-    ck = model_key_for(chat_id, task)
-    price = key_price(ck)
-    suffix = f" ({price} за 1M)" if price else ""
-    await update.message.reply_text(
-        f"🧠 Модель для «{task_ru}». Сейчас: {key_label(ck)}{suffix}.\n"
-        "🤖 Авто — выбирает по сложности. ⭐ — рекомендуется, ✅ — выбрана. Жми:",
-        reply_markup=build_model_keyboard(chat_id, task),
-    )
+    aliases = {"общение": "default", "планы": "plan", "план": "plan",
+               "разбор": "analyze", "голос": "voice_route"}
+    if arg in aliases:
+        arg = aliases[arg]
+
+    # /model all — полная таблица всех доступных моделей
+    if arg == "all":
+        lines = ["🧠 Все доступные модели:"]
+        for tier in TIER_ORDER:
+            group = [v for v in MODELS.values() if v.get("tier") == tier]
+            if not group:
+                continue
+            lines.append(f"\n{TIER_TITLE.get(tier, tier)}:")
+            for m in group:
+                lines.append(f"  • {m['label']} — ${m['in']}/{m['out']} за 1M")
+        lines.append("\n— Текущие под задачи —")
+        for t in ("default", "plan", "analyze", "voice_route"):
+            lines.append(f"• {task_names[t]}: {key_label(model_key_for(chat_id, t))}")
+        lines.append("\nСменить: /model общение | планы | разбор | голос")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    # /model <задача> — выбор модели под конкретную задачу (кнопки)
+    if arg in TASK_RECOMMENDED:
+        ck = model_key_for(chat_id, arg)
+        price = key_price(ck)
+        suffix = f" ({price} за 1M)" if price else ""
+        await update.message.reply_text(
+            f"🧠 Модель для «{task_names.get(arg, arg)}». Сейчас: {key_label(ck)}{suffix}.\n"
+            "🤖 Авто — по сложности. ⭐ — рекомендуется, ✅ — выбрана. Жми:",
+            reply_markup=build_model_keyboard(chat_id, arg),
+        )
+        return
+
+    # голая /model — сводка реально работающих моделей по задачам
+    lines = ["🧠 Что сейчас работает под каждую команду:\n"]
+    for t in ("default", "plan", "analyze", "voice_route"):
+        ck = model_key_for(chat_id, t)
+        price = key_price(ck)
+        suffix = f" · {price}" if price else ""
+        lines.append(f"• {task_names[t]}: {key_label(ck)}{suffix}")
+    lines.append("\nСменить: /model общение | планы | разбор | голос")
+    lines.append("Полный список моделей: /model all")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def on_model_pick(update: Update, context: ContextTypes.DEFAULT_TYPE):
