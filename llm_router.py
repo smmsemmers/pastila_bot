@@ -186,8 +186,8 @@ DEFAULT_CONTEXT_MODE = _dm if _dm in ("truncate", "squeeze") else "truncate"
 # Модель, которая делает выжимку в режиме squeeze. По умолчанию Sonnet 4.6 —
 # аккуратнее пересказывает и реже теряет важное (дороже gpt-4o-mini ~в 20 раз).
 # Подешевле, но всё ещё бережно: "dsv4pro" ($0.435/0.87) или "gemini35fl".
-_sm = os.environ.get("SQUEEZE_MODEL", "sonnet46")
-SQUEEZE_MODEL_KEY = _sm if _sm in MODELS else "sonnet46"
+_sm = os.environ.get("SQUEEZE_MODEL", "gemini31fl")
+SQUEEZE_MODEL_KEY = _sm if _sm in MODELS else "gemini31fl"
 
 _persist_cb = None
 
