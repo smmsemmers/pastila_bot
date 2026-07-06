@@ -509,6 +509,18 @@ def key_price(key):
     return _price_tag(MODELS[key])
 
 
+# ── бейдж модели: подпись «какая модель сделала этот ответ» ──
+_BADGE_TASK_RU = {"default": "общение", "plan": "план", "analyze": "разбор",
+                  "voice_route": "голос"}
+
+
+def badge(task, label, is_auto=False):
+    """Строка-подпись под ответом: «🧠 план · Claude Sonnet 4.6». Пусто, если выключено."""
+    task_ru = _BADGE_TASK_RU.get(task, task)
+    auto = " · 🤖 авто" if is_auto else ""
+    return f"\n\n🧠 {task_ru} · {label}{auto}"
+
+
 def build_model_keyboard(chat_id, task, *, with_run=False):
     cur_key = model_key_for(chat_id, task)
     rec_key = TASK_RECOMMENDED.get(task, TASK_RECOMMENDED["default"])
