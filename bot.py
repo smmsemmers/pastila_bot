@@ -2161,8 +2161,9 @@ async def _batch_run(context, mgid):
     recs = analysis.get("recommendations") or []
     recs_block = ("\n\n💡 <b>Что предлагаю:</b>\n"
                   + "\n".join(f"• {esc(r)}" for r in recs)) if recs else ""
-    sent = await note.edit_text(header + body + recs_block, parse_mode="HTML",
-                                reply_markup=_file_actions_keyboard())
+    sent = await note.edit_text(
+        header + body + recs_block + "\n\n🧠 разбор файлов · Claude Opus 4.8",
+        parse_mode="HTML", reply_markup=_file_actions_keyboard())
     _FILE_STASH[sent.message_id] = {"content": combined, "title": f"Пакет из {len(items)} файлов"}
 
 
