@@ -1752,7 +1752,7 @@ async def _maybe_check_insight(chat_id: int, msg_id: int, msg_text: str, bot) ->
         raw = await llm.call_llm(
             [llm.sys_cached(INSIGHT_PROMPT),
              {"role": "user", "content": transcript}],
-            "haiku45", temperature=0, max_tokens=250,
+            "gpt54nano", temperature=0, max_tokens=250,
             response_format={"type": "json_object"},
         )
         result = llm.loads_loose(raw)
