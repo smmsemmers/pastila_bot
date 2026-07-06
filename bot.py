@@ -2500,7 +2500,7 @@ async def _run_plan(update, context, pending):
         logger.error("План: %s", e)
         await note.edit_text("⚠️ Не получилось составить план. Попробуй позже.")
         return
-    chunks = _chunks(plan.strip() or "Пусто.")
+    chunks = _chunks((plan.strip() or "Пусто.") + llm.badge("plan", label, is_auto))
     await note.edit_text(chunks[0])
     for ch in chunks[1:]:
         await context.bot.send_message(chat_id, ch)
