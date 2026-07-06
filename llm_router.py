@@ -582,11 +582,13 @@ async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if task not in TASK_RECOMMENDED:
         task = "default"
     chat_id = update.effective_chat.id
+    task_names = {"default": "общение", "plan": "планы", "analyze": "разбор", "voice_route": "голос"}
+    task_ru = task_names.get(task, task)
     ck = model_key_for(chat_id, task)
     price = key_price(ck)
     suffix = f" ({price} за 1M)" if price else ""
     await update.message.reply_text(
-        f"🧠 Модель для задачи «{task}». Сейчас: {key_label(ck)}{suffix}.\n"
+        f"🧠 Модель для «{task_ru}». Сейчас: {key_label(ck)}{suffix}.\n"
         "🤖 Авто — выбирает по сложности. ⭐ — рекомендуется, ✅ — выбрана. Жми:",
         reply_markup=build_model_keyboard(chat_id, task),
     )
