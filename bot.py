@@ -4256,7 +4256,10 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             thinking_budget=8000,
             timeout=180,
         )
-        await wait.edit_text(f"🍬 <b>Стратегический совет</b>\n\n{answer}", parse_mode="HTML")
+        await wait.edit_text(
+            f"🍬 <b>Стратегический совет</b>\n\n{answer}\n\n🧠 стратегия · Claude Opus 4.8",
+            parse_mode="HTML",
+        )
     except Exception as e:
         logger.error("cmd_strategy: %s", e)
         await wait.edit_text(f"⚠️ Ошибка при запросе к модели: {e}")
