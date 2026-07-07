@@ -157,6 +157,95 @@ console.log(
   }`
 );
 
+// ── Аппрув групп: запрос админам + обработка кнопок ───────────────
+async function requestGroupApproval(chat, addedBy) {
+  if (approvedChats.has(String(chat.id))) return;
+  pendingChats.add(String(chat.id));
+  const who = addedBy ? `\nДобавил: ${addedBy}` : "";
+  const text =
+    `🔐 Запрос на использование\n\n` +
+    `Бота добавили в группу «${chat.title || chat.id}»\n` +
+    `id: ${chat.id}${who}\n\n` +
+    `Разрешить боту работать в этой группе?`;
+  const reply_markup = {
+    inline_keyboard: [
+      [
+        { text: "✅ Разрешить", callback_data: `grpok::${chat.id}` },
+        { text: "❌ Запретить", callback_data: `grpno::${chat.id}` },
+      ],
+    ],
+  };
+  let sent = false;
+  for (const adminId of ADMIN_USER_IDS) {
+    try {
+      await bot.sendMessage(adminId, text, { reply_markup });
+      sent = true;
+    } catch (e) {
+      console.error(`approval → admin ${adminId} failed:`, e.message);
+    }
+  }
+  if (!sent) {
+    console.error(`Некому одобрить группу ${chat.id} — админы не писали боту /start.`);
+  }
+}
+
+// Бота добавили в группу → просим одобрение
+bot.on("new_chat_members", async (msg) => {
+  try {
+    if (!GROUP_APPROVAL) return;
+    const added = msg.new_chat_members || [];
+    if (!added.some((m) => m.id === botInfo.id)) return; // добавили не нас
+    if (approvedChats.has(String(msg.chat.id))) return;
+    const f = msg.from;
+    const addedBy = f
+      ? f.username
+        ? "@" + f.username
+        : [f.first_name, f.last_name].filter(Boolean).join(" ")
+      : null;
+    await requestGroupApproval(msg.chat, addedBy);
+  } catch (e) {
+    console.error("new_chat_members:", e.message);
+  }
+});
+
+// Кнопки одобрения/отклонения группы (только админ)
+bot.on("callback_query", async (cq) => {
+  try {
+    const m = String(cq.data || "").match(/^grp(ok|no)::(-?\d+)$/);
+    if (!m) {
+      await bot.answerCallbackQuery(cq.id);
+      return;
+    }
+    if (!ADMIN_USER_IDS.has(String(cq.from.id))) {
+      await bot.answerCallbackQuery(cq.id, {
+        text: "Решать может только админ.",
+        show_alert: true,
+      });
+      return;
+    }
+    await bot.answerCallbackQuery(cq.id);
+    const gid = m[2];
+    pendingChats.delete(gid);
+    const where = { chat_id: cq.message.chat.id, message_id: cq.message.message_id };
+    if (m[1] === "ok") {
+      approvedChats.add(gid);
+      saveApprovedChats();
+      await bot.editMessageText(`✅ Группа одобрена (id ${gid}). Бот в ней работает.`, where);
+    } else {
+      approvedChats.delete(gid);
+      saveApprovedChats();
+      await bot.editMessageText(`❌ Группа отклонена (id ${gid}). Выхожу из неё.`, where);
+      try {
+        await bot.leaveChat(gid);
+      } catch (e) {
+        console.error("leaveChat:", e.message);
+      }
+    }
+  } catch (e) {
+    console.error("callback_query:", e.message);
+  }
+});
+
 function parseCsvIds(value) {
   return new Set(
     String(value || "")
