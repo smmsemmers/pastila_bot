@@ -44,9 +44,27 @@ TAG_GLEB=@foxruso
 TZ=Europe/Moscow
 ```
 
+## GPT remote (@pastila_gPT_remote_bot)
+
+Второй бот живёт в `gpt-remote/` (Node.js):
+
+```bash
+cd ~/pastila_bot/gpt-remote
+npm install
+cp .env.example .env   # заполнить TELEGRAM_BOT_TOKEN и OPENROUTER_API_KEY
+npm start              # = node index.mjs
+```
+
+Основной режим — **OpenRouter** (`OPENROUTER_API_KEY`, авто-роутинг под задачу).
+Без него бот откатывается на прямой OpenAI с моделью `OPENAI_MODEL` (fallback).
+Оба бота вместе удобно поднимать через pm2: `pm2 start ecosystem.config.cjs`.
+
+> Бридж @pastila_code_remote_bot запускается отдельно — `start-code-bridge.command`
+> (это сам Claude Code, отдельного процесса-бота в репо нет).
+
 ## Остановить
 
-`Ctrl+C` в терминале.
+`Ctrl+C` в терминале (или `pm2 stop all`).
 
 ## Деплой на Render
 
