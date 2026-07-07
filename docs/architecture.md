@@ -77,7 +77,9 @@ OPENAI     OPENROUTER  GOOGLE
 | `OPENROUTER_API_KEY` | нет | все LLM-функции (30+ моделей) |
 | `TRIM_LEVEL` | нет (4) | обрезка контекста 0–10 |
 | `CONTEXT_MODE` | нет (truncate) | truncate или squeeze |
-| `SQUEEZE_MODEL` | нет (sonnet46) | модель для сжатия контекста |
+| `SQUEEZE_MODEL` | нет (gemini31fl) | модель для сжатия контекста |
+| `BRIDGE_PRIMARY` | нет (true) | task-бот молчит на свободный ввод/голос/файлы/инсайты (главенство бриджа) |
+| `TASKBOT_COMMAND_ONLY` | нет | понятный алиас к `BRIDGE_PRIMARY`; если задан — имеет приоритет |
 | `DIGEST_HOUR` | нет (12) | час отправки дайджеста |
 | `DIGEST_MINUTE` | нет (0) | минута |
 | `TZ` | нет (Europe/Moscow) | таймзона |
