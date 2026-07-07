@@ -389,6 +389,21 @@ GPT-OSS 120B, Qwen3 Coder, Qwen3-Next 80B
 
 ---
 
+### Матрица моделей по задачам (`TASK_RECOMMENDED` + код)
+
+| Задача | Рекомендованная модель | Где |
+|---|---|---|
+| Общение (`default`) | **Claude Sonnet 4.6** (тумблер `/fable` → Fable 5 ↔ Opus 4.8) | `TASK_RECOMMENDED` |
+| План (`/plan`) | Claude Sonnet 4.6 | `TASK_RECOMMENDED` |
+| Разбор переписки (`/analyze`) | GPT-5.4 mini | `TASK_RECOMMENDED` |
+| Голос (`voice_route`) | GPT-5.4 nano | `TASK_RECOMMENDED` |
+| Разбор файлов / `/strategy` / `/deep` | Claude Opus 4.8 (+ extended thinking) | захардкожено в `bot.py` |
+| Веб-этап `/deep` | Perplexity Sonar Deep Research | захардкожено в `bot.py` |
+
+`/model` позволяет переопределить `default`/`plan`/`analyze`/`voice_route` вручную или на 🤖 Авто. Выбор сохраняется в `llm_config`.
+
+---
+
 ### Авто-режим (без вызова LLM — чистая эвристика)
 
 ```python
