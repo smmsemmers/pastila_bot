@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SS = 2
-OW, OH = 1280, 600
+OW, OH = 960, 540           # 16:9
 W, H = OW * SS, OH * SS
 
 _BOLD = [
