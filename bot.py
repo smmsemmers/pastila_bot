@@ -4836,7 +4836,7 @@ def main():
     # Гейт аппрува: в самом раннем group=-20 глушит неодобренные группы (личка/одобренные — свободно)
     app.add_handler(TypeHandler(Update, _group_gate), group=-20)
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("welcome", cmd_welcome))
     app.add_handler(CommandHandler("id", cmd_id))
     # бота добавили в группу → запрос на одобрение админам (или приветствие, если одобрено)
