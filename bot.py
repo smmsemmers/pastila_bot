@@ -4906,7 +4906,11 @@ def main():
         )
 
     _load_llm_state()
+    _load_approved_groups()
     _load_knowledge()
+    if GROUP_APPROVAL:
+        logger.info("Аппрув групп включён. Админы: %s. Одобрено групп: %d.",
+                    sorted(ADMIN_USER_IDS) or "—", len(APPROVED_CHATS))
     llm.set_persistence(lambda: asyncio.to_thread(_save_llm_state))
     llm.register(app)
     llm.register_runner("analyze", _run_analyze)
