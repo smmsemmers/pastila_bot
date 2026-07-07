@@ -753,9 +753,9 @@ async def cmd_fable(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ───────────────────────── подключение к приложению ─────────────────────────
 COMMANDS = [
-    BotCommand("model", "Модели по задачам · /model all — полный список"),
-    BotCommand("fable", "Общение: Fable 5 ↔ Opus 4.8 (быстрый тумблер)"),
-    BotCommand("trim", "Контекст: обрезка 0–10 или умное сжатие"),
+    BotCommand("model", "🍎 Модель по задачам (/model all — список)"),
+    BotCommand("fable", "🍎 Общение: Fable 5 ↔ Opus 4.8"),
+    BotCommand("trim", "🍎 Контекст: обрезка или умное сжатие"),
 ]
 
 
