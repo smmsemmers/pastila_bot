@@ -143,6 +143,7 @@ const BOT_COMMANDS = [
   { command: "ocr", description: "🍡 Текст с картинки" },
   { command: "codex", description: "🍫 Codex CLI (если включён)" },
   { command: "status", description: "🍡 Статус и модели" },
+  { command: "welcome", description: "🍬 Привет и что умею" },
   { command: "help", description: "🍭 Справка" },
 ];
 try {
