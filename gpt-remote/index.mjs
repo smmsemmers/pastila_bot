@@ -160,6 +160,42 @@ console.log(
   }`
 );
 
+// ── Приветствие (единая айдентика Pastila OS) ─────────────────────
+const WELCOME_IMAGE = path.join(__dirname, "..", "assets", "welcome.png");
+const WELCOME_TEXT =
+  "👋 <b>Pastila OS — команда ИИ-ботов</b>\n" +
+  "💻 <b>Pastila Code</b> — ✦ ядро: живое общение, думает и делает (код, файлы, деплой).\n" +
+  "🗂 <b>TaskBot</b> — ✓ задачи, дедлайны, напоминания.\n" +
+  "🔍 <b>GPT Remote</b> — исследователь: интернет, deep research, OCR (это я).\n\n" +
+  "Ниже — я, <b>GPT Remote</b>: спрошу интернет, соберу отчёт со ссылками, вытащу текст с картинки.\n\n" +
+  "<b>🍬 Команды</b>\n" +
+  "🍭 <code>/research</code> вопрос — веб-поиск со ссылками\n" +
+  "🍫 <code>/agent</code> задача — глубокое исследование (отчёт + источники)\n" +
+  "🍬 <code>/gpt</code> текст — спросить (модель выберется сама)\n" +
+  "🍡 <code>/ocr</code> + картинка — текст с картинки\n" +
+  "🍎 <code>/model</code> — выбрать GPT (5.5/5.4/mini)\n" +
+  "🍭 <code>/help</code> — подробная справка\n\n" +
+  "Просто напиши вопрос или пришли картинку 🍓";
+
+const _lastWelcome = new Map(); // chatId -> ts (антидубль от deep-link ?startgroup=)
+async function sendWelcome(chatId) {
+  const now = Date.now();
+  if (now - (_lastWelcome.get(String(chatId)) || 0) < 20000) return;
+  _lastWelcome.set(String(chatId), now);
+  try {
+    await bot.sendPhoto(chatId, WELCOME_IMAGE, {
+      caption: WELCOME_TEXT,
+      parse_mode: "HTML",
+    });
+  } catch (e) {
+    try {
+      await bot.sendMessage(chatId, WELCOME_TEXT, { parse_mode: "HTML" });
+    } catch (e2) {
+      console.error("sendWelcome:", e2.message);
+    }
+  }
+}
+
 // ── Аппрув групп: запрос админам + обработка кнопок ───────────────
 async function requestGroupApproval(chat, addedBy) {
   if (approvedChats.has(String(chat.id))) return;
