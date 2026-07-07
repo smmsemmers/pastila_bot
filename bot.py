@@ -135,7 +135,14 @@ INSIGHT_NOTIFY = os.environ.get("INSIGHT_NOTIFY", "true").lower() in ("1", "true
 
 # Главный — бридж (Claude Code). Task-бот тогда не лезет сам в файлы/текст/инсайты,
 # чтобы не перебивать бридж, но остаётся для команд (/new, /list…) и расписаний (дайджест/алерты).
-BRIDGE_PRIMARY = os.environ.get("BRIDGE_PRIMARY", "true").lower() in ("1", "true", "yes")
+# Режим «task-бот только на команды»: не лезет в свободный текст/голос/файлы/инсайты,
+# чтобы не перебивать бридж @pastila_code_remote_bot. По умолчанию включён (true).
+# TASKBOT_COMMAND_ONLY — более понятный алиас к BRIDGE_PRIMARY: если задан, имеет
+# приоритет; иначе читается BRIDGE_PRIMARY. Обе переменные полностью совместимы.
+_command_only_raw = os.environ.get("TASKBOT_COMMAND_ONLY")
+if _command_only_raw is None:
+    _command_only_raw = os.environ.get("BRIDGE_PRIMARY", "true")
+BRIDGE_PRIMARY = _command_only_raw.lower() in ("1", "true", "yes")
 
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
