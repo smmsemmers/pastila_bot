@@ -4676,6 +4676,7 @@ def main():
     app.add_handler(CommandHandler("purge", cmd_purge))
     app.add_handler(CallbackQueryHandler(on_purge_confirm, pattern="^purge::"))
     app.add_handler(CommandHandler("q", cmd_quick_idea))
+    app.add_handler(CommandHandler("quick_idea", cmd_quick_idea))  # алиас к /q
     app.add_handler(CommandHandler("dash", cmd_dash))
     app.add_handler(CommandHandler("post", cmd_post))
     app.add_handler(CommandHandler("recurring", cmd_recurring))
