@@ -74,6 +74,15 @@ services:
       # false: только ⭐-реакция + тихое сохранение в KB
       - key: INSIGHT_NOTIFY
         value: "true"
+      # ── Аппрув групп ──
+      # GROUP_APPROVAL=true: при добавлении бота в новую группу админам летит
+      # запрос ✅/❌, до одобрения бот в группе молчит. Одобренные группы хранятся
+      # в таблице (llm_config!A2) и переживают редеплой.
+      - key: GROUP_APPROVAL
+        value: "true"
+      # ADMIN_USER_IDS — кто одобряет (numeric id через запятую); по умолчанию Лена.
+      - key: ADMIN_USER_IDS
+        value: "41082373"
 
   # ── GPT-бот (@pastila_gPT_remote_bot), код в подпапке gpt-remote/ ──
   # Отдельный воркер: Node.js, polling, входящего порта нет.
