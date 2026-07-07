@@ -698,6 +698,8 @@ bot.on("message", async (msg) => {
         if (sources.length) {
           out += "\n\n🔗 Источники:\n" + sources.map((s, i) => `${i + 1}. ${s.title}\n${s.url}`).join("\n");
         }
+        const badgeModel = mode === "agent" ? "Perplexity Sonar (deep research)" : mlabel;
+        out += `\n\n🍎 ${mode === "agent" ? "исследование" : "веб-поиск"} · ${badgeModel}`;
         await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
         await sendLong(chatId, out);
       } catch (e) {
