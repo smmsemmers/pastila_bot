@@ -80,6 +80,8 @@ OPENAI     OPENROUTER  GOOGLE
 | `SQUEEZE_MODEL` | нет (gemini31fl) | модель для сжатия контекста |
 | `BRIDGE_PRIMARY` | нет (true) | task-бот молчит на свободный ввод/голос/файлы/инсайты (главенство бриджа) |
 | `TASKBOT_COMMAND_ONLY` | нет | понятный алиас к `BRIDGE_PRIMARY`; если задан — имеет приоритет |
+| `GROUP_APPROVAL` | нет (true) | при добавлении в новую группу админам летит запрос ✅/❌; до одобрения бот в группе молчит |
+| `ADMIN_USER_IDS` | нет (Лена) | кто одобряет группы (numeric id через запятую) |
 | `DIGEST_HOUR` | нет (12) | час отправки дайджеста |
 | `DIGEST_MINUTE` | нет (0) | минута |
 | `TZ` | нет (Europe/Moscow) | таймзона |
