@@ -65,16 +65,27 @@
 
 > 🔇 = выключено у task-бота, когда `BRIDGE_PRIMARY=true` (эти функции ведёт бридж @pastila_code_remote_bot).
 
-## 💬 Функции @pastila_gPT_remote_bot (код: `~/pastila-gpt-remote/index.mjs`, Node.js)
+## 💬 Функции @pastila_gPT_remote_bot (код: `gpt-remote/index.mjs`, Node.js)
 
-Лёгкий GPT-мост. Модель: **gpt-5.5** (env `OPENAI_MODEL`). Команды из кода:
-- `/gpt [текст]` — спросить GPT. Также отвечает на упоминание, реплай боту, в личке и на присланные фото/документы.
-- `/ocr + картинка` — извлечь текст с картинки (OCR через vision). Можно подписью к фото или реплаем на картинку.
+GPT-мост с авто-роутингом. **Провайдер:** OpenRouter (если задан `OPENROUTER_API_KEY`) —
+модель подбирается под задачу; иначе откат на прямой OpenAI с моделью `OPENAI_MODEL`
+(fallback, по умолчанию `gpt-4o-mini`). Карта роутинга:
+`chat → Claude Opus 4.8`, `code → GPT-5.3 Codex`, `reasoning → GPT-5.5`,
+`vision/OCR → Gemini 3.1 Pro`; классификатор типа — `Gemini 2.5 Flash-Lite`.
+
+Команды из кода (`index.mjs`):
+- `/gpt [текст]` — спросить (модель выберется сама по типу задачи). Также отвечает на упоминание, реплай боту, в личке и на присланные фото/документы.
+- `/research [вопрос]` — 🔎 веб-поиск выбранной GPT-моделью со ссылками (web-плагин OpenRouter).
+- `/agent [задача]` — 🤖 глубокое исследование через **Perplexity Sonar Deep Research** (отчёт + источники, ~1–2 мин). Скрытый алиас `/deep` работает как research-режим.
+- `/model [5.5|5.4|mini|4omini]` — выбрать GPT для `/research` и `/agent` (экономия токенов).
+- `/ocr + картинка` — извлечь текст с картинки (OCR через vision). Подписью к фото или реплаем на картинку.
 - `/codex [задача]` — запустить Codex CLI, если включён (`ENABLE_CODEX`); работает в `CODEX_WORKDIR` с песочницей `CODEX_SANDBOX`.
-- `/status` — user_id, chat_id, тип чата, текущая модель, статус Codex.
+- `/status` — provider mode, карта моделей (route map), выбранная research-модель, fallback `OPENAI_MODEL`, статус Codex.
 - `/start` `/help` `/i` — справка.
 
-> Примечание: в справке task-бота этот бот упомянут как «/research, /agent, OCR» — это устаревшее описание; фактические команды в коде — `/gpt`, `/ocr`, `/codex`, `/status`.
+> **On-demand.** GPT-бот работает по требованию: в группе отвечает на свои команды,
+> упоминание или реплай; в личке — на любое сообщение. В render.yaml для него нужен
+> `OPENROUTER_API_KEY` (основной режим) — без него бот жив, но крутится только на fallback-модели.
 
 ## 💻 Функции @pastila_code_remote_bot — бридж (Claude Code, Opus 4.8 1M)
 
