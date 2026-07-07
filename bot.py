@@ -3214,6 +3214,12 @@ START_TEXT = (
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /start = единый приветственный баннер (одно сообщение). Подробности — в /help.
+    await _send_welcome(context.bot, update.effective_chat.id,
+                        update.message.message_thread_id if update.message else None)
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_TEXT, parse_mode="HTML")
 
 
