@@ -3355,8 +3355,100 @@ async def _send_welcome(bot, chat_id, thread_id=None):
         )
 
 
+# ------------------------------------------------------------------
+# АППРУВ ГРУПП — бот работает в группе только после одобрения админом
+# ------------------------------------------------------------------
+def _group_approval_keyboard(chat_id):
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Разрешить", callback_data=f"grpok::{chat_id}"),
+        InlineKeyboardButton("❌ Запретить", callback_data=f"grpno::{chat_id}"),
+    ]])
+
+
+async def _request_group_approval(bot, chat, added_by=None):
+    """Шлёт всем админам запрос на одобрение группы с кнопками. Дедуп по _PENDING_GROUPS."""
+    if chat.id in APPROVED_CHATS:
+        return
+    _PENDING_GROUPS.add(chat.id)
+    who = f"\nДобавил: {added_by}" if added_by else ""
+    title = chat.title or chat.id
+    text = (
+        "🔐 <b>Запрос на использование</b>\n\n"
+        f"Бота добавили в группу «<b>{title}</b>»\n"
+        f"id: <code>{chat.id}</code>{who}\n\n"
+        "Разрешить боту работать в этой группе?"
+    )
+    sent = False
+    for admin_id in ADMIN_USER_IDS:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML",
+                                   reply_markup=_group_approval_keyboard(chat.id))
+            sent = True
+        except Exception as e:
+            logger.warning("Не смог отправить запрос админу %s: %s (не писал боту /start?)",
+                           admin_id, e)
+    if not sent:
+        logger.warning("Некому отправить запрос по группе %s — админы не начинали лс с ботом.",
+                       chat.id)
+
+
+async def _group_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Глушит активность в НЕодобренной группе (кроме событий участия и лички).
+    При первом сообщении из новой группы — один раз просит админа одобрить."""
+    if not GROUP_APPROVAL:
+        return
+    # события добавления/удаления бота обрабатывает on_added_to_group — их пропускаем
+    if update.my_chat_member or update.chat_member:
+        return
+    chat = update.effective_chat
+    if chat is None or chat.type not in ("group", "supergroup"):
+        return  # личка и каналы — не трогаем
+    if chat.id in APPROVED_CHATS:
+        return  # группа одобрена — работаем как обычно
+    # неодобренная группа: просим одобрить (один раз) и глушим остальные хендлеры
+    if chat.id not in _PENDING_GROUPS:
+        await _request_group_approval(context.bot, chat)
+    raise ApplicationHandlerStop
+
+
+async def on_group_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id not in ADMIN_USER_IDS:
+        await q.answer("Одобрять может только админ.", show_alert=True)
+        return
+    await q.answer()
+    chat_id = int(q.data.split("::")[1])
+    APPROVED_CHATS.add(chat_id)
+    _PENDING_GROUPS.discard(chat_id)
+    await asyncio.to_thread(_save_approved_groups)
+    await q.edit_message_text(f"✅ Группа одобрена (id <code>{chat_id}</code>). Бот в ней работает.",
+                              parse_mode="HTML")
+    try:
+        await _send_welcome(context.bot, chat_id)
+    except Exception as e:
+        logger.warning("Не смог поздороваться в одобренной группе %s: %s", chat_id, e)
+
+
+async def on_group_deny(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id not in ADMIN_USER_IDS:
+        await q.answer("Решать может только админ.", show_alert=True)
+        return
+    await q.answer()
+    chat_id = int(q.data.split("::")[1])
+    _PENDING_GROUPS.discard(chat_id)
+    APPROVED_CHATS.discard(chat_id)
+    await asyncio.to_thread(_save_approved_groups)
+    await q.edit_message_text(f"❌ Группа отклонена (id <code>{chat_id}</code>). Выхожу из неё.",
+                              parse_mode="HTML")
+    try:
+        await context.bot.leave_chat(chat_id)
+    except Exception as e:
+        logger.warning("Не смог выйти из группы %s: %s", chat_id, e)
+
+
 async def on_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Бота добавили в группу — здороваемся баннером с описанием."""
+    """Бота добавили в группу — просим одобрение (или сразу здороваемся, если уже одобрено)."""
     cmu = update.my_chat_member
     if cmu is None:
         return
@@ -3364,12 +3456,25 @@ async def on_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now_in = cmu.new_chat_member.status in (
         ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER
     )
-    if was_out and now_in and cmu.chat.type in ("group", "supergroup"):
-        logger.info("Добавлен в группу %s (%s) — шлю приветствие", cmu.chat.id, cmu.chat.title)
+    if not (was_out and now_in and cmu.chat.type in ("group", "supergroup")):
+        return
+    # нужен аппрув и группа ещё не одобрена → шлём запрос админам, не здороваемся
+    if GROUP_APPROVAL and cmu.chat.id not in APPROVED_CHATS:
+        added_by = None
+        if cmu.from_user:
+            added_by = (f"@{cmu.from_user.username}" if cmu.from_user.username
+                        else cmu.from_user.full_name)
+        logger.info("Добавлен в группу %s — запрашиваю одобрение у админов", cmu.chat.id)
         try:
-            await _send_welcome(context.bot, cmu.chat.id)
+            await _request_group_approval(context.bot, cmu.chat, added_by)
         except Exception as e:
-            logger.error("Не смог отправить приветствие: %s", e)
+            logger.error("Не смог запросить одобрение группы: %s", e)
+        return
+    logger.info("Добавлен в группу %s (%s) — шлю приветствие", cmu.chat.id, cmu.chat.title)
+    try:
+        await _send_welcome(context.bot, cmu.chat.id)
+    except Exception as e:
+        logger.error("Не смог отправить приветствие: %s", e)
 
 
 async def cmd_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE):
