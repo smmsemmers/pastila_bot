@@ -116,6 +116,13 @@ services:
         sync: false
       - key: ALLOWED_CHAT_IDS
         sync: false
+      # ── Аппрув групп ──
+      # При добавлении в новую группу админам летит запрос ✅/❌. У GPT-бота список
+      # одобренных групп в файле (эфемерная ФС Render) — сбрасывается при передеплое.
+      - key: GROUP_APPROVAL
+        value: "true"
+      - key: ADMIN_USER_IDS
+        value: "41082373"
       # Codex / выполнение локальных команд (по умолчанию выключено)
       - key: ENABLE_CODEX
         value: "false"
