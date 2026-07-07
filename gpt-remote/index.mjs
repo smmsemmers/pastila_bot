@@ -270,6 +270,11 @@ bot.on("callback_query", async (cq) => {
       approvedChats.add(gid);
       saveApprovedChats();
       await bot.editMessageText(`✅ Группа одобрена (id ${gid}). Бот в ней работает.`, where);
+      try {
+        await sendWelcome(gid); // поздороваться в только что одобренной группе
+      } catch (e) {
+        console.error("welcome after approve:", e.message);
+      }
     } else {
       approvedChats.delete(gid);
       saveApprovedChats();
