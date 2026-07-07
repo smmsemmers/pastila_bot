@@ -12,7 +12,9 @@
 | 💬 **@pastila_gPT_remote_bot** | Чат и поиск: `/gpt`, `/research`, `/agent` (глубокое исследование), `/model`, OCR, `/codex` | OpenRouter-роутинг (chat→Opus 4.8, code→GPT-5.3 Codex, reasoning→GPT-5.5, vision→Gemini 3.1 Pro); fallback `OPENAI_MODEL` | По требованию |
 | 💻 **@pastila_code_remote_bot** | Claude Code: код, деплой, файлы с диска, экспорты, тяжёлое, действия на Маке | **Claude Opus 4.8 (1M)** — сам Claude Code, НЕ через роутер | По требованию (запуск `start-code-bridge.command`) |
 
-**BRIDGE_PRIMARY** (env, по умолчанию `true`): когда бридж @pastila_code_remote_bot главный — task-бот НЕ лезет сам в голос / свободный текст / файлы / инсайты (чтобы не перебивать бридж), но остаётся на свои команды и расписания. Функции ниже, помеченные 🔇, в этом режиме выключены у task-бота.
+**BRIDGE_PRIMARY** (env, по умолчанию `true`): когда бридж @pastila_code_remote_bot главный — task-бот НЕ лезет сам в голос / свободный текст / файлы / инсайты (чтобы не перебивать бридж), но остаётся на свои команды и расписания. Функции ниже, помеченные 🔇, в этом режиме выключены у task-бота. Более понятный алиас — **TASKBOT_COMMAND_ONLY** (тот же смысл): если задан, имеет приоритет над `BRIDGE_PRIMARY`; иначе читается `BRIDGE_PRIMARY`. Обе переменные совместимы.
+
+> ⚠️ **Важно про бридж.** «Главенство бриджа» обеспечивает именно task-бот через `BRIDGE_PRIMARY`/`TASKBOT_COMMAND_ONLY` — он замолкает на свободный ввод. Отдельного bridge-**рантайма** в этом репозитории нет: бридж — это сам Claude Code, запускаемый `start-code-bridge.command`, с правилами из `CLAUDE.md`, скриптом кнопок `send-buttons.sh` и hook'ом `.claude/hooks/require-telegram-reply.py`. Переключения модели Claude Code «на лету» из Telegram в репо нет (см. Limitations).
 
 ## 📋 Все функции @PastilaTaskBot (полный список из кода)
 
