@@ -254,7 +254,7 @@ JobQueue.run_daily(12:00)
 _whisper_transcribe()          ← OpenAI Whisper API
   │ raw text транскрипт
   ▼
-_gpt_voice_route(transcript)   ← дешёвая LLM (gpt-4o-mini)
+_gpt_voice_route(transcript)   ← дешёвая LLM (voice_route → GPT-5.4 nano)
   │ VOICE_ROUTER_PROMPT
   │ Возвращает один из 6 типов:
   │
