@@ -122,6 +122,29 @@ def make(name, theme):
         # символ </>
         f = bold(int(s * 0.95))
         d.text((cx, cy - s * 0.06), "</>", font=f, fill=ink, anchor="mm")
+    elif sym == "lens":
+        # лупа — исследователь / deep research
+        r = s * 0.34
+        lcx, lcy = cx - s * 0.10, cy - s * 0.12
+        d.ellipse([lcx - r, lcy - r, lcx + r, lcy + r],
+                  outline=ink, width=max(8 * SS, int(s * 0.12)))
+        # ручка
+        hx0, hy0 = lcx + r * 0.72, lcy + r * 0.72
+        hx1, hy1 = cx + s * 0.44, cy + s * 0.44
+        d.line([(hx0, hy0), (hx1, hy1)], fill=ink,
+               width=max(10 * SS, int(s * 0.15)))
+
+    elif sym == "spark":
+        # искра/звезда — «умное ядро», главный ИИ
+        def star(ccx, ccy, R, r, rot=90):
+            pts = []
+            for i in range(8):
+                ang = math.radians(rot + i * 45)
+                rr = R if i % 2 == 0 else r
+                pts.append((ccx + rr * math.cos(ang), ccy - rr * math.sin(ang)))
+            return pts
+        d.polygon(star(cx, cy, s * 0.54, s * 0.17), fill=ink)
+        d.polygon(star(cx + s * 0.44, cy - s * 0.42, s * 0.17, s * 0.05), fill=ink)
 
     out = base.convert("RGB").resize((OUT, OUT), Image.LANCZOS)
     path = os.path.join(HERE, f"icon-{name}.png")
