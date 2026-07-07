@@ -3530,15 +3530,15 @@ PIN_MAIN_TEXT = (
 PIN_SECTIONS = {
     "bots": (
         "🤖 Боты",
-        "<b>🤖 Три бота — три роли</b>\n\n"
-        "🤖 <b>@PastilaTaskBot</b> — операционный: задачи, напоминания, разбор присланных "
-        "файлов/фото/голоса кнопками. Всегда онлайн. Мозг — модели через OpenRouter: "
-        "общение на Claude Sonnet 4.6, тяжёлое (файлы, стратегия, /deep) — Opus 4.8.\n\n"
-        "💬 <b>@pastila_gPT_remote_bot</b> — чат и поиск: <code>/gpt</code>, "
-        "<code>/research</code>, <code>/agent</code> (глубокое исследование в интернете), "
-        "OCR. Модель подбирается сама (OpenRouter).\n\n"
-        "💻 <b>@pastila_code_remote_bot</b> — Claude Code: код, деплой, файлы с диска. "
-        "Запускается по требованию.",
+        "<b>🤖 Команда ботов — ядро и два помощника</b>\n\n"
+        "💻 <b>Pastila Code</b> (@pastila_code_remote_bot) — ✦ <b>ядро</b>. Главный "
+        "ИИ-собеседник (Claude): живое общение, думает и делает — код, деплой, файлы, "
+        "экспорты, связки сервисов. По требованию.\n\n"
+        "🤖 <b>@PastilaTaskBot</b> — ✓ оператор: задачи, дедлайны, напоминания, разбор "
+        "файлов кнопками. Всегда онлайн. Модели через OpenRouter (общение — Sonnet 4.6, "
+        "тяжёлое — Opus 4.8).\n\n"
+        "💬 <b>@pastila_gPT_remote_bot</b> — 🔍 исследователь: <code>/research</code>, "
+        "<code>/agent</code> (deep research), <code>/gpt</code>, OCR. По требованию.",
     ),
     "files": (
         "📥 Что кидать",
