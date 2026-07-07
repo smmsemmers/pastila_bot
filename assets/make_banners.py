@@ -135,27 +135,27 @@ def make(name, b):
         d.ellipse([px, py, px + 3 * SS, py + 3 * SS], fill=(255, 255, 255, 235))
     draw_symbol(d, cx, cy, s, b["ink"], b["sym"])
 
-    # текст справа
+    # текст справа (шрифты — доли высоты, чтобы не вылезали на 16:9)
     tx = int(W * 0.40)
     ink = b["ink"]
     # тег роли — «пилюля»
-    tagf = bold(30 * SS)
+    tagf = bold(int(H * 0.050))
     tw = d.textbbox((0, 0), b["tag"], font=tagf)
-    pill_w = (tw[2] - tw[0]) + 44 * SS
-    pill_h = 58 * SS
-    py0 = int(H * 0.16)
+    pill_h = int(H * 0.085)
+    pill_w = (tw[2] - tw[0]) + int(H * 0.06)
+    py0 = int(H * 0.15)
     d.rounded_rectangle([tx, py0, tx + pill_w, py0 + pill_h], radius=pill_h // 2,
                         fill=ink + (255,))
     d.text((tx + pill_w / 2, py0 + pill_h / 2), b["tag"], font=tagf,
            fill=(255, 255, 255, 255), anchor="mm")
 
-    d.text((tx, int(H * 0.34)), b["title"], font=bold(84 * SS),
+    d.text((tx, int(H * 0.35)), b["title"], font=bold(int(H * 0.125)),
            fill=C_TITLE + (255,), anchor="lm")
-    d.text((tx, int(H * 0.50)), b["key"], font=bold(40 * SS),
+    d.text((tx, int(H * 0.51)), b["key"], font=bold(int(H * 0.058)),
            fill=ink + (255,), anchor="lm")
-    d.multiline_text((tx, int(H * 0.60)), b["func"], font=reg(30 * SS),
-                     fill=C_SUB + (255,), spacing=10 * SS, anchor="la")
-    d.text((tx, int(H * 0.86)), b["handle"], font=reg(28 * SS),
+    d.multiline_text((tx, int(H * 0.61)), b["func"], font=reg(int(H * 0.045)),
+                     fill=C_SUB + (255,), spacing=int(H * 0.018), anchor="la")
+    d.text((tx, int(H * 0.87)), b["handle"], font=reg(int(H * 0.042)),
            fill=C_SUB + (255,), anchor="lm")
 
     out = img.convert("RGB").resize((OW, OH), Image.LANCZOS)
