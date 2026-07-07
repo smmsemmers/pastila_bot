@@ -620,7 +620,12 @@ bot.on("message", async (msg) => {
 
     if (!shouldRespond(msg)) return;
 
-    if (/^\/(start|help|i)(@\w+)?(\s|$)/i.test(rawText)) {
+    if (/^\/(start|welcome)(@\w+)?(\s|$)/i.test(rawText)) {
+      await sendWelcome(chatId);
+      return;
+    }
+
+    if (/^\/(help|i)(@\w+)?(\s|$)/i.test(rawText)) {
       await sendLong(
         chatId,
         [
