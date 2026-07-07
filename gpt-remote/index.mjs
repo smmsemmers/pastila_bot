@@ -96,6 +96,35 @@ const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 180000);
 const allowedUserIds = parseCsvIds(process.env.ALLOWED_USER_IDS);
 const allowedChatIds = parseCsvIds(process.env.ALLOWED_CHAT_IDS);
 
+// ── Аппрув групп: бот работает в группе только после одобрения админом ──
+// GROUP_APPROVAL=true (по умолчанию): при добавлении бота в новую группу
+// админам (ADMIN_USER_IDS, по умолчанию Лена) прилетает запрос с кнопками ✅/❌.
+// До одобрения бот в группе молчит. Личка и одобренные группы работают всегда.
+const ADMIN_USER_IDS = parseCsvIds(process.env.ADMIN_USER_IDS || "41082373");
+const GROUP_APPROVAL =
+  String(process.env.GROUP_APPROVAL || "true").toLowerCase() === "true";
+// Одобренные группы храним в файле рядом с ботом. На бесплатном Render файл
+// живёт до передеплоя (эфемерная ФС) — тогда группу нужно одобрить заново.
+const APPROVED_FILE = path.join(process.cwd(), "approved-chats.json");
+
+function loadApprovedChats() {
+  try {
+    return new Set(JSON.parse(fs.readFileSync(APPROVED_FILE, "utf8")).map(String));
+  } catch {
+    return new Set();
+  }
+}
+function saveApprovedChats() {
+  try {
+    fs.writeFileSync(APPROVED_FILE, JSON.stringify([...approvedChats]));
+  } catch (e) {
+    console.error("saveApprovedChats failed:", e.message);
+  }
+}
+const approvedChats = loadApprovedChats();
+const pendingChats = new Set();
+for (const c of allowedChatIds) approvedChats.add(String(c)); // заранее разрешённые чаты
+
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
   polling: true,
 });
