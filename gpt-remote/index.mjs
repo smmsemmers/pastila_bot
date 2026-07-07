@@ -741,7 +741,7 @@ bot.on("message", async (msg) => {
         mode: isOcr ? "ocr" : "gpt",
       });
 
-      const footer = USE_OPENROUTER ? `\n\n— ${route.label}` : "";
+      const footer = USE_OPENROUTER ? `\n\n🍎 ${isOcr ? "OCR" : "ответ"} · ${route.label}` : "";
       await sendLong(chatId, text + footer);
     }
   } catch (error) {
