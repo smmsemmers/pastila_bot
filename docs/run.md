@@ -68,8 +68,13 @@ npm start              # = node index.mjs
 
 ## Деплой на Render
 
-Render подхватывает изменения автоматически при `git push origin main`.  
+Полное руководство (оба бота, план 24/7, бесплатный fallback) — в [../DEPLOY.md](../DEPLOY.md).
+
+Кратко: Render подхватывает изменения автоматически при `git push` в подключённую ветку.  
 Переменные окружения задаются в дашборде Render → Environment.
+
+⚠️ Для работы 24/7 нужен платный **Background Worker** (Starter ~$7/мес) — на бесплатном
+плане воркеров нет, а free web-сервис засыпает через 15 мин простоя.
 
 Проверить логи: Render Dashboard → pastila-task-bot → Logs.
 
