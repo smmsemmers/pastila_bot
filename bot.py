@@ -3573,11 +3573,17 @@ async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"=== ОТКРЫТЫЕ ЗАДАЧИ ({len(task_lines)}) ===\n{tasks_ctx}\n\n"
             f"=== БАЗА ЗНАНИЙ ===\n{kb_ctx or 'Пусто.'}\n\n"
             f"=== ПЕРЕПИСКА КОМАНДЫ ===\n{log_text or 'Нет данных.'}\n\n"
-            f"=== ВЕБ-ИССЛЕДОВАНИЕ РЫНКА ===\n{web_research}"
+            f"=== ВЕБ-ИССЛЕДОВАНИЕ{f' ПО ТЕМЕ «{scope}»' if scope else ' РЫНКА'} ===\n{web_research}"
+        )
+        synth_query = (
+            f"Проведи глубокий анализ по теме «{scope}» с учётом собранных веб-данных "
+            "и внутренних данных команды. Выдай полный доклад."
+            if scope else
+            "Проведи глубокий анализ с учётом данных о рынке. Выдай полный доклад."
         )
         report = await llm.call_llm(
             [llm.sys_cached(_DEEP_PROMPT),
-             llm.user_with_cache(static_ctx, "Проведи глубокий анализ с учётом данных о рынке. Выдай полный доклад.")],
+             llm.user_with_cache(static_ctx, synth_query)],
             model_id=llm.MODELS["opus48"]["id"],
             max_tokens=5000,
             thinking_budget=12000,
