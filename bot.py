@@ -4812,12 +4812,16 @@ def main():
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
     )
 
+    # Гейт аппрува: в самом раннем group=-20 глушит неодобренные группы (личка/одобренные — свободно)
+    app.add_handler(TypeHandler(Update, _group_gate), group=-20)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("welcome", cmd_welcome))
     app.add_handler(CommandHandler("id", cmd_id))
-    # бота добавили в группу → приветственный баннер
+    # бота добавили в группу → запрос на одобрение админам (или приветствие, если одобрено)
     app.add_handler(ChatMemberHandler(on_added_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
+    app.add_handler(CallbackQueryHandler(on_group_approve, pattern="^grpok::"))
+    app.add_handler(CallbackQueryHandler(on_group_deny, pattern="^grpno::"))
     app.add_handler(CallbackQueryHandler(on_welcome_info, pattern="^welcomeinfo::"))
     app.add_handler(CallbackQueryHandler(on_help_nav, pattern="^help::"))
     app.add_handler(CommandHandler("list", cmd_list))
