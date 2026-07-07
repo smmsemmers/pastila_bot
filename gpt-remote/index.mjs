@@ -452,28 +452,29 @@ bot.on("message", async (msg) => {
     if (!isAllowed(msg)) return;
     if (!shouldRespond(msg)) return;
 
-    if (/^\/start/i.test(rawText) || /^\/help/i.test(rawText)) {
+    if (/^\/(start|help|i)(@\w+)?(\s|$)/i.test(rawText)) {
       await sendLong(
         chatId,
         [
           "Pastila GPT Remote работает.",
           "",
           USE_OPENROUTER
-            ? "Модель подбирается автоматически под задачу (OpenRouter):"
-            : `Модель: ${FALLBACK_MODEL}`,
+            ? `Провайдер: OpenRouter (модель подбирается сама под задачу; fallback ${FALLBACK_MODEL}):`
+            : `Провайдер: OpenAI · модель: ${FALLBACK_MODEL}`,
           USE_OPENROUTER ? "• текст → Claude Opus 4.8" : "",
           USE_OPENROUTER ? "• код → GPT-5.3 Codex" : "",
           USE_OPENROUTER ? "• анализ/стратегия → GPT-5.5" : "",
           USE_OPENROUTER ? "• картинки/OCR → Gemini 3.1 Pro" : "",
           "",
           "Команды:",
-          "/status — статус и карта моделей",
+          "/status — статус, карта моделей и настройки",
           "/gpt текст — спросить (модель выберется сама)",
           "/research вопрос — 🔎 веб-поиск (GPT + интернет, со ссылками)",
           "/agent задача — 🤖 глубокое исследование (Perplexity, отчёт+источники, ~1-2 мин)",
-          "/model — выбрать GPT для /research (5.5/5.4/mini, экономия токенов)",
+          "/model — выбрать GPT для /research и /agent (5.5/5.4/mini, экономия токенов)",
           "/ocr + картинка — извлечь текст с картинки",
           "/codex задача — запустить Codex CLI, если включён",
+          "/help (/i) — эта справка",
           "",
           "В группе:",
           `/gpt@${botUsername} сделай список задач`,
