@@ -3346,9 +3346,19 @@ def _welcome_keyboard():
     ])
 
 
+_LAST_WELCOME = {}  # chat_id -> timestamp последнего приветствия (антидубль)
+
+
 async def _send_welcome(bot, chat_id, thread_id=None):
     """Шлёт приветственный баннер с описанием команд и кнопкой «Подробнее».
-    Если картинки нет — отправляет только текст (тоже с кнопкой)."""
+    Если картинки нет — отправляет только текст (тоже с кнопкой).
+    Антидубль: если приветствие в этот чат уже уходило < 20 сек назад
+    (напр. deep-link ?startgroup= одновременно добавляет бота и шлёт /start) — пропускаем."""
+    import time as _time
+    now = _time.time()
+    if now - _LAST_WELCOME.get(chat_id, 0) < 20:
+        return
+    _LAST_WELCOME[chat_id] = now
     try:
         with open(WELCOME_IMAGE, "rb") as img:
             await bot.send_photo(
