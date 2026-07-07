@@ -525,6 +525,20 @@ prepare_context(chat_log, chat_id, task)
 
 ---
 
+## Три бота и главенство бриджа (bridge primary)
+
+В связке три бота, но **самостоятельных рантайма в этом репо — два**:
+
+- **@PastilaTaskBot** — `bot.py` (Python, Render worker).
+- **@pastila_gPT_remote_bot** — `gpt-remote/index.mjs` (Node.js, on-demand): OpenRouter-роутинг, команды `/gpt /research /agent /model /ocr /codex /status` (+ скрытый `/deep`).
+- **@pastila_code_remote_bot (бридж)** — это **сам Claude Code**, запускаемый `start-code-bridge.command` с правилами `CLAUDE.md`. Отдельного бота-процесса в коде репо нет; вспомогательное — `send-buttons.sh` и `.claude/hooks/require-telegram-reply.py`.
+
+**Главенство бриджа** реализовано в task-боте флагом `BRIDGE_PRIMARY` (алиас `TASKBOT_COMMAND_ONLY`, по умолчанию `true`): при нём task-бот не реагирует на свободный текст, голос, файлы и инсайты — только на свои команды и расписания, чтобы не перебивать бридж. Это НЕ отдельный сервис-переключатель, а условие внутри `bot.py`.
+
+**Limitation:** переключения модели Claude Code «на лету» из Telegram в репо нет (модель CLI задаётся при запуске). Флаги `BRIDGE_DEFAULT_MODEL` / `BRIDGE_ALLOW_MODEL_SWITCH` намеренно не заводили как мёртвые — это future work.
+
+---
+
 ## Как это развивает бизнес
 
 | Проблема | Решение |
