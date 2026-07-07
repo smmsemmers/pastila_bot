@@ -146,6 +146,21 @@ if _command_only_raw is None:
     _command_only_raw = os.environ.get("BRIDGE_PRIMARY", "true")
 BRIDGE_PRIMARY = _command_only_raw.lower() in ("1", "true", "yes")
 
+# ── Аппрув групп: бот работает в группе только после одобрения админом ──
+# GROUP_APPROVAL=true (по умолчанию): при добавлении бота в новую группу
+# админам прилетает запрос с кнопками ✅/❌; до одобрения бот в группе молчит.
+# ADMIN_USER_IDS — кто одобряет (Telegram numeric id через запятую).
+# По умолчанию — Лена (@elenaisanewleet). Личка и одобренные группы всегда работают.
+GROUP_APPROVAL = os.environ.get("GROUP_APPROVAL", "true").lower() in ("1", "true", "yes")
+ADMIN_USER_IDS = {
+    int(x) for x in re.split(r"[,\s]+", os.environ.get("ADMIN_USER_IDS", "41082373"))
+    if x.strip().lstrip("-").isdigit()
+}
+# Одобренные группы (chat_id). Заполняется из таблицы при старте + GROUP_CHAT_ID.
+APPROVED_CHATS: set = set()
+# Группы, по которым запрос уже отправлен (чтобы не спамить админа).
+_PENDING_GROUPS: set = set()
+
 # ------------------------------------------------------------------
 # GOOGLE SHEETS — подключение
 # ------------------------------------------------------------------
