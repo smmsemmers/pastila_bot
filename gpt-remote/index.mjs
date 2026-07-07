@@ -327,7 +327,7 @@ function isMentioned(text) {
 }
 
 function startsWithKnownCommand(text) {
-  return /^\/(start|help|i|status|gpt|ocr|codex|research|deep|agent|model)(@\w+)?(\s|$)/i.test(text || "");
+  return /^\/(start|welcome|help|i|status|gpt|ocr|codex|research|deep|agent|model)(@\w+)?(\s|$)/i.test(text || "");
 }
 
 function shouldRespond(msg) {
