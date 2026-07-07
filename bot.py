@@ -4450,7 +4450,7 @@ async def cmd_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timeout=180,
         )
         await wait.edit_text(
-            f"🍬 <b>Стратегический совет</b>\n\n{answer}\n\n🧠 стратегия · Claude Opus 4.8",
+            f"🍬 <b>Стратегический совет</b>\n\n{answer}" + llm.badge("strategy", "Claude Opus 4.8"),
             parse_mode="HTML",
         )
     except Exception as e:
