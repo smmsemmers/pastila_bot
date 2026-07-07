@@ -134,14 +134,14 @@ const botUsername = botInfo.username;
 
 // Регистрируем команды в Telegram, чтобы показывались в меню «/» (и в личке, и в группах)
 const BOT_COMMANDS = [
-  { command: "gpt", description: "Спросить (модель подберётся сама)" },
-  { command: "research", description: "🔎 Веб-поиск со ссылками" },
-  { command: "agent", description: "🤖 Глубокое исследование (Perplexity)" },
-  { command: "model", description: "⚙️ Выбрать GPT (5.5/5.4/mini)" },
-  { command: "ocr", description: "Текст с картинки" },
-  { command: "codex", description: "Codex CLI (если включён)" },
-  { command: "status", description: "Статус и модели" },
-  { command: "help", description: "Справка" },
+  { command: "gpt", description: "🍬 Спросить (модель сама)" },
+  { command: "research", description: "🍭 Веб-поиск со ссылками" },
+  { command: "agent", description: "🍫 Глубокое исследование" },
+  { command: "model", description: "🍎 Выбрать GPT (5.5/5.4/mini)" },
+  { command: "ocr", description: "🍡 Текст с картинки" },
+  { command: "codex", description: "🍫 Codex CLI (если включён)" },
+  { command: "status", description: "🍡 Статус и модели" },
+  { command: "help", description: "🍭 Справка" },
 ];
 try {
   await bot.setMyCommands(BOT_COMMANDS); // default scope
