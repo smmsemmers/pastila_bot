@@ -214,6 +214,30 @@ def _save_llm_state():
         logger.warning("Не удалось сохранить состояние LLM: %s", e)
 
 
+# ── Персистентность одобренных групп (та же вкладка llm_config, ячейка A2) ──
+def _load_approved_groups():
+    """Грузит одобренные группы из таблицы; всегда добавляет основную GROUP_CHAT_ID,
+    чтобы рабочая группа не «отвалилась» после обновления."""
+    global APPROVED_CHATS
+    try:
+        raw = _llm_config_ws().acell("A2").value or "[]"
+        APPROVED_CHATS = {int(x) for x in json.loads(raw)}
+        logger.info("Одобренных групп загружено: %d", len(APPROVED_CHATS))
+    except Exception as e:
+        logger.warning("Не удалось загрузить одобренные группы: %s", e)
+        APPROVED_CHATS = set()
+    if GROUP_CHAT_ID:
+        APPROVED_CHATS.add(GROUP_CHAT_ID)
+
+
+def _save_approved_groups():
+    try:
+        _llm_config_ws().update_acell(
+            "A2", json.dumps(sorted(APPROVED_CHATS), ensure_ascii=False))
+    except Exception as e:
+        logger.warning("Не удалось сохранить одобренные группы: %s", e)
+
+
 _KB_TAB = "_knowledge"
 _KB_HEADERS = ["source", "item_id", "title", "content", "added_at", "tags"]
 
