@@ -90,9 +90,16 @@ services:
       # Токен бота от @BotFather
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-      # OpenAI
+      # ── LLM-провайдер ──
+      # Основной режим — OpenRouter (авто-роутинг: chat→Opus 4.8, code→GPT-5.3 Codex,
+      # reasoning→GPT-5.5, vision/OCR→Gemini 3.1 Pro; /agent→Perplexity Sonar Deep).
+      # Обязателен для полноценной работы; без него — откат на OpenAI + OPENAI_MODEL.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # OpenAI: fallback-модель (когда нет OpenRouter) и/или Codex CLI.
       - key: OPENAI_API_KEY
         sync: false
+      # OPENAI_MODEL — fallback, а не основная модель при работающем OpenRouter.
       - key: OPENAI_MODEL
         value: "gpt-4o-mini"
       # Контроль доступа: Telegram numeric ID через запятую
