@@ -8,8 +8,8 @@
 
 | Бот | Роль | Мозг / модель | Когда онлайн |
 |---|---|---|---|
-| 🤖 **@PastilaTaskBot** | Операционный: задачи, напоминания, разбор присланных файлов/фото/голоса кнопками, база знаний, Notion | Модели через **OpenRouter-роутер** (`llm_router.py`); дефолт общения — Opus 4.8, разбор файлов/стратегия — Opus 4.8, план — Sonnet 4.6, голос/analyze — GPT-4o mini | Всегда онлайн (Render) |
-| 💬 **@pastila_gPT_remote_bot** | Чат и поиск: `/research`, `/agent` (глубокое исследование в интернете), OCR | GPT | По требованию |
+| 🤖 **@PastilaTaskBot** | Операционный: задачи, напоминания, разбор присланных файлов/фото/голоса кнопками, база знаний, Notion | Модели через **OpenRouter-роутер** (`llm_router.py`); дефолт общения — **Sonnet 4.6** (тумблер `/fable` → Fable 5 ↔ Opus 4.8), план — Sonnet 4.6, разбор файлов/стратегия/`/deep` — Opus 4.8, `/analyze` — GPT-5.4 mini, голос — GPT-5.4 nano | Всегда онлайн (Render) |
+| 💬 **@pastila_gPT_remote_bot** | Чат и поиск: `/gpt`, `/research`, `/agent` (глубокое исследование), `/model`, OCR, `/codex` | OpenRouter-роутинг (chat→Opus 4.8, code→GPT-5.3 Codex, reasoning→GPT-5.5, vision→Gemini 3.1 Pro); fallback `OPENAI_MODEL` | По требованию |
 | 💻 **@pastila_code_remote_bot** | Claude Code: код, деплой, файлы с диска, экспорты, тяжёлое, действия на Маке | **Claude Opus 4.8 (1M)** — сам Claude Code, НЕ через роутер | По требованию (запуск `start-code-bridge.command`) |
 
 **BRIDGE_PRIMARY** (env, по умолчанию `true`): когда бридж @pastila_code_remote_bot главный — task-бот НЕ лезет сам в голос / свободный текст / файлы / инсайты (чтобы не перебивать бридж), но остаётся на свои команды и расписания. Функции ниже, помеченные 🔇, в этом режиме выключены у task-бота.
