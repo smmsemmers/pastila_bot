@@ -568,6 +568,17 @@ bot.on("message", async (msg) => {
 
   try {
     if (!isAllowed(msg)) return;
+
+    // Аппрув групп: в неодобренной группе бот молчит (и один раз просит одобрить)
+    if (
+      GROUP_APPROVAL &&
+      (msg.chat.type === "group" || msg.chat.type === "supergroup") &&
+      !approvedChats.has(String(chatId))
+    ) {
+      if (!pendingChats.has(String(chatId))) await requestGroupApproval(msg.chat, null);
+      return;
+    }
+
     if (!shouldRespond(msg)) return;
 
     if (/^\/(start|help|i)(@\w+)?(\s|$)/i.test(rawText)) {
