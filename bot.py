@@ -4576,7 +4576,7 @@ async def _set_commands(app):
             BotCommand("purge", "Удалить все задачи из таблицы (с подтверждением)"),
             BotCommand("edit", "Изменить поле задачи (ответом на карточку)"),
             BotCommand("tokens", "Статистика токенов и стоимость вызовов с запуска"),
-            BotCommand("deep", "Глубокий анализ всего: задачи + KB + проблемы + план"),
+            BotCommand("deep", "Глубокий анализ (веб → синтез); можно /deep тема"),
             BotCommand("strategy", "Стратегический совет — что делать дальше (Opus + thinking)"),
             BotCommand("pin", "Интерактивное описание группы с навигацией"),
             BotCommand("ai", "Проверить связь с OpenAI / OpenRouter"),
