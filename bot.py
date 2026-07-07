@@ -58,10 +58,12 @@ from telegram import (
 )
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     CallbackQueryHandler,
     ChatMemberHandler,
     MessageHandler,
+    TypeHandler,
     ConversationHandler,
     ContextTypes,
     filters,
