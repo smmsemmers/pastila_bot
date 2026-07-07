@@ -6,6 +6,7 @@
 Эмодзи не используем (PIL рисует их ч/б) — только векторные фигуры и текст.
 """
 import os
+import math
 import random
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
