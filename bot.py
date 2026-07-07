@@ -3748,7 +3748,8 @@ async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timeout=210,
         )
 
-        chunks = _chunks(report.strip(), size=4000)
+        report_out = report.strip() + llm.badge("deep", "Claude Opus 4.8 + Perplexity Sonar")
+        chunks = _chunks(report_out, size=4000)
         await wait.edit_text(f"🔬 <b>Глубокий анализ</b>\n\n{chunks[0]}", parse_mode="HTML")
         for ch in chunks[1:]:
             await msg.reply_text(ch, parse_mode="HTML")
