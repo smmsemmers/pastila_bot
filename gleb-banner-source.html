@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1584px; height: 396px; overflow: hidden; }
+.banner {
+  width: 1584px;
+  height: 396px;
+  background: linear-gradient(135deg, #e8ede6 0%, #f0ede4 40%, #e6ede8 70%, #dde8e0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 80px;
+  position: relative;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+}
+.shapes {
+  position: absolute;
+  left: 60px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  opacity: 0.25;
+}
+.shape {
+  background: #8faa8a;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+}
+.shape1 { width: 100px; height: 130px; transform: rotate(-10deg); }
+.shape2 { width: 65px; height: 85px; transform: rotate(5deg) translateY(30px); }
+.shape3 { width: 55px; height: 70px; transform: rotate(-5deg) translateY(-10px); }
+.content {
+  text-align: right;
+}
+.company {
+  font-size: 18px;
+  letter-spacing: 0.15em;
+  color: #5a7a5a;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+.title {
+  font-size: 54px;
+  font-weight: 700;
+  color: #2d4a2d;
+  margin-bottom: 14px;
+  line-height: 1.1;
+}
+.subtitle {
+  font-size: 22px;
+  color: #4a6a4a;
+  margin-bottom: 20px;
+  font-weight: 400;
+}
+.tags {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+.tag {
+  border: 1.5px solid #6a8a6a;
+  border-radius: 20px;
+  padding: 6px 18px;
+  font-size: 16px;
+  color: #4a6a4a;
+  font-weight: 500;
+}
+</style>
+</head>
+<body>
+<div class="banner">
+  <div class="shapes">
+    <div class="shape shape1"></div>
+    <div class="shape shape2"></div>
+    <div class="shape shape3"></div>
+  </div>
+  <div class="content">
+    <div class="company">Belev Pastila &middot; Semers Group</div>
+    <div class="title">Food Export &amp; Trade Compliance</div>
+    <div class="subtitle">Confectionery &amp; Apple Desserts &middot; EU &middot; Japan &middot; Canada</div>
+    <div class="tags">
+      <span class="tag">EU Trade Compliance</span>
+      <span class="tag">Private Label</span>
+      <span class="tag">TARIC &middot; EPA &middot; HACCP</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>
