@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glebs Semerna — LinkedIn v8 (скорректирован под экспертные сети)</title>
+<style>
+  :root{--sage:#8ba888;--sage-d:#5f7d5c;--line:#e3e1dc;--blue:#0a66c2;--muted:#00000099;--amber:#b26a00;--red:#b23b2e;--green:#2e7d47}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#eceae4;color:#000000e6;padding:22px 0;line-height:1.5}
+  .wrap{max-width:820px;margin:0 auto;padding:0 14px}
+  h2.section{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#5b5b5b;margin:26px 4px 10px;font-weight:700}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden}
+  .preview .banner{height:150px;position:relative;overflow:hidden;background:radial-gradient(120px 120px at 86% 40%,#d9e4d6 0%,rgba(217,228,214,0) 70%),radial-gradient(90px 90px at 70% 78%,#e7ddc7 0%,rgba(231,221,199,0) 70%),linear-gradient(115deg,#eaf0e6 0%,#dfe8da 45%,#cbdcc6 100%)}
+  .banner .apple{position:absolute;right:150px;top:40px;width:66px;height:70px;opacity:.35}
+  .banner .kicker{position:absolute;right:26px;top:44px;text-align:right;color:#33463a}
+  .banner .kicker .t1{font-size:17px;font-weight:700}
+  .banner .kicker .t2{font-size:12.5px;color:#4c6150;margin-top:4px}
+  .banner .chips{position:absolute;right:26px;bottom:16px;display:flex;gap:6px}
+  .banner .chip{background:#ffffffcc;border:1px solid #fff;border-radius:12px;padding:2px 9px;font-size:10.5px;color:#3b5142;font-weight:600}
+  .intro{padding:0 22px 18px;position:relative}
+  .avatar{width:118px;height:118px;border-radius:50%;border:4px solid #fff;margin-top:-58px;background:#cfc7b6 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="%23c3bba9"/><circle cx="60" cy="46" r="23" fill="%239aa38f"/><ellipse cx="60" cy="106" rx="38" ry="26" fill="%239aa38f"/></svg>') center/cover}
+  h1{font-size:23px;font-weight:600;margin-top:10px}
+  .headline{font-size:15px;margin-top:6px;color:#000000d9}
+  .row{font-size:13px;color:var(--muted);margin-top:8px}
+  .link{color:var(--blue);font-weight:600}
+  h3{font-size:19px;font-weight:600;padding:16px 22px 2px}
+  .body{padding:4px 22px 18px;font-size:14px;color:#000000d9}
+  .body p{margin-bottom:11px}
+  .exp{display:flex;gap:12px;padding:14px 22px;border-top:1px solid #f1f0ec}
+  .exp:first-of-type{border-top:none}
+  .logo{width:46px;height:46px;border-radius:9px;background:#eceae4;display:flex;align-items:center;justify-content:center;font-weight:700;color:#6b6b6b;flex:0 0 46px}
+  .role{font-weight:600;font-size:15px}.org{font-size:13.5px}.sub{font-size:12.5px;color:var(--muted);margin-bottom:5px}
+  .exp ul{margin:5px 0 0 17px;font-size:13px;color:#000000cf}
+  .skills{padding:8px 22px 18px}
+  .pill{display:inline-block;background:#f3f2ef;border:1px solid var(--line);border-radius:16px;padding:6px 12px;font-size:12.5px;margin:4px 6px 4px 0}
+  .pin{background:#eaf3ec;border-color:#c3e2c9;font-weight:600}
+  .instr{padding:16px 20px}
+  .step{border-left:3px solid var(--sage);padding:2px 0 2px 14px;margin:0 0 16px}
+  .step h4{font-size:15px;margin-bottom:6px}
+  .copybox{background:#f7faf7;border:1px solid #dbe7db;border-radius:8px;padding:10px 12px;font-size:13px;margin:6px 0;white-space:pre-wrap}
+  .flag{display:inline-block;font-size:11px;font-weight:700;border-radius:5px;padding:1px 7px;margin-right:6px}
+  .warn{background:#fdf2e2;color:var(--amber)}.opt{background:#eef4ee;color:var(--green)}
+  .note{font-size:12px;color:#00000088;padding:2px 4px 16px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f6f5f2;font-weight:700;width:150px;color:#33463a}
+</style></head>
+<body><div class="wrap">
+
+  <div class="card" style="background:#fdf6e9;border-color:#e9d9b8;padding:12px 16px;font-size:13px">
+    ✅ <b>v8 — скорректирован под экспертные сети</b> (11.07.2026). Headline переписан точнее под matching. About — добавлены outcome-bullets, убрана строка про LLM/AI. Ставки: старт $300–400/ч. Glebs Semerna, две независимые компании, «30+ markets». IFS — НЕ пишем (HACCP). Belev start date — ✍️ ждём от Глеба.
+  </div>
+
+  <h2 class="section">▸ Превью</h2>
+  <div class="card preview">
+    <div class="banner">
+      <svg class="apple" viewBox="0 0 64 68"><path d="M32 16c-6-10-20-8-24 0-5 10 2 30 12 38 4 3 8 3 12 0 10-8 17-28 12-38-4-8-18-10-24 0z" fill="#5f7d5c"/></svg>
+      <div class="kicker"><div class="t1">Semers Group · Belev Pastila</div><div class="t2">Premium Confectionery &amp; Fruit Snacks · EU Exports</div></div>
+      <div class="chips"><span class="chip">Trade Compliance</span><span class="chip">Private Label</span></div>
+    </div>
+    <div class="intro">
+      <div class="avatar"></div>
+      <h1>Glebs Semerna</h1>
+      <div class="headline">Owner-Operator | Food Manufacturing &amp; EU Exports — Premium Confectionery &amp; Fruit Snacks | Private Label | Trade Compliance: TARIC · Origin · EU-Japan EPA | Riga, Latvia</div>
+      <div class="row">Riga, Latvia · <span class="link">Contact info</span></div>
+      <div class="row"><span class="link">semers.org</span> · 500+ connections</div>
+    </div>
+  </div>
+
+  <div class="card"><h3>About</h3><div class="body">
+    <p>I run a fruit-snack and confectionery manufacturing business in Riga, Latvia — premium pastila, meringues and ice cream — exporting to 30+ markets across the EU, Balkans and Scandinavia, with ~100 active B2B accounts and an active market-entry pipeline in Japan and North America.</p>
+    <p>Owner-operator, hands-on across the full cycle: sales and key accounts, production planning, procurement, and trade compliance — from TARIC classification and preferential origin to a customs advance ruling with Japan Customs under the EU-Japan EPA.</p>
+    <p>I've built private-label projects for EU retail, taken products through supplier onboarding, labeling and claims compliance, and turned production offcuts into a standalone high-margin SKU. Currently automating SME food operations with LLM tools and computer vision.</p>
+    <p>Pastila, if you haven't met it: premium fruit-based confectionery with meringue structure — naturally low-fat, and a genuinely underrated export category.</p>
+    <p>Available for expert consultations on: confectionery &amp; snacks route-to-market and distribution, private label and EU retail entry, food trade compliance (TARIC and HS classification, rules of origin, landed cost, EU-Japan EPA advance ruling), and Russia/CIS consumer-market insights at a category level.</p>
+  </div></div>
+
+  <div class="card"><h3>Experience</h3>
+    <div class="exp"><div class="logo">SG</div><div>
+      <div class="role">Owner &amp; Managing Director</div>
+      <div class="org">SIA Semers Group · Full-time</div>
+      <div class="sub">Riga, Latvia</div>
+      <ul><li>Own and run a fruit-snack and confectionery manufacturing business (pastila, meringues, ice cream) with EU/Baltics B2B exports and ~100 active retail and distribution accounts.</li>
+      <li>Hands-on across commercial, operational and trade-compliance functions — sales &amp; key accounts, production planning, procurement, logistics.</li>
+      <li>Deliver private-label projects for EU retail and distribution partners: recipes and specs, packaging, certification, logistics.</li>
+      <li>Run full retail onboarding: supplier approval, labeling and claims compliance (EU Reg. 1924/2006), shelf-life validation, EAN/logistics, margin structures, recall procedures.</li>
+      <li>Handle food trade compliance: TARIC classification (incl. BOPP/CPP packaging film, China→EU), preferential rules of origin, landed-cost models; HACCP-based food safety system at the Riga plant.</li>
+      <li>Turned production offcuts into a standalone high-margin SKU (35 g meringues) — a waste-to-revenue case in industrial confectionery.</li></ul>
+    </div></div>
+    <div class="exp"><div class="logo">BP</div><div>
+      <div class="role">Head of International Sales &amp; Export Development</div>
+      <div class="org">Belev Pastila Manufactory · Full-time</div>
+      <div class="sub">Start date — уточнить (≈2015) · Russia</div>
+      <ul><li>Lead international sales and export development for premium fruit-based confectionery.</li>
+      <li>Drive market entry and distributor-led route-to-market across the EU, Balkans and Scandinavia, incl. named distribution partners Fruchtschmaus (Germany) and Me Gusto (Poland), and a drugstore retail channel in Poland via a distribution partner.</li>
+      <li>Led a Japan Customs advance ruling for apple-based fruit confectionery under the EU-Japan EPA — prepared the technical dossier (production parameters, composition, classification argument) and assessed preferential origin.</li></ul>
+    </div></div>
+    <div class="exp"><div class="logo">CI</div><div><div class="role">Manager</div><div class="org">Colliers International</div><div class="sub">Mar 2015 – Nov 2015 · Moscow, Russia <span class="flag opt">оставить</span></div></div></div>
+  </div>
+
+  <div class="card"><h3>Education</h3>
+    <div class="exp"><div class="logo">HH</div><div><div class="role">The Hague University of Applied Sciences</div><div class="org">Media &amp; Entertainment Management</div></div></div>
+    <div class="exp"><div class="logo">SU</div><div><div class="role">Stenden University</div><div class="org">Industrial Design Engineering</div></div></div>
+  </div>
+
+  <div class="card"><h3>Skills</h3><div class="skills">
+    <span class="pill pin">Food Export ★</span><span class="pill pin">Trade Compliance ★</span><span class="pill pin">TARIC Classification ★</span>
+    <span class="pill">Confectionery</span><span class="pill">Fruit-Based Snacks</span><span class="pill">Apple Snacks</span><span class="pill">Shelf-Stable Desserts</span><span class="pill">Private Label</span><span class="pill">EU Retail</span><span class="pill">Distributor Management</span><span class="pill">Route-to-Market</span><span class="pill">Rules of Origin</span><span class="pill">EU-Japan EPA</span><span class="pill">Landed Cost</span><span class="pill">HS / Customs Classification</span><span class="pill">HACCP</span><span class="pill">Food Safety</span><span class="pill">Supplier Onboarding</span><span class="pill">Labeling &amp; Claims Compliance</span><span class="pill">Category Management</span><span class="pill">Market Entry</span><span class="pill">FMCG</span><span class="pill">Consumer Goods</span><span class="pill">Russia/CIS Markets</span><span class="pill">Food Manufacturing</span><span class="pill">Packaging Compliance (PPWR)</span><span class="pill">Food SME Operations</span><span class="pill">AI / Automation</span>
+  </div><div class="note">★ — закрепить топ-3.</div></div>
+
+  <!-- INSTRUCTION -->
+  <h2 class="section">▸ Копи-блоки для заливки</h2>
+  <div class="card"><div class="instr">
+    <div class="step"><h4>Имя и локация</h4>
+      <table><tr><th>Публичное имя</th><td>Glebs Semerna (LinkedIn) · Gleb Semerna — только KYC/выплаты</td></tr>
+      <tr><th>Location</th><td>Riga, Latvia</td></tr></table></div>
+    <div class="step"><h4>Headline</h4>
+      <div class="copybox">Owner-Operator | Food Manufacturing &amp; EU Exports — Premium Confectionery &amp; Fruit Snacks | Private Label | Trade Compliance: TARIC · Origin · EU-Japan EPA | Riga, Latvia</div></div>
+    <div class="step"><h4>About</h4>
+      <div class="copybox">I run a fruit-snack and confectionery manufacturing business in Riga, Latvia — premium pastila, meringues and ice cream — exporting to 30+ markets across the EU, Balkans and Scandinavia, with ~100 active B2B accounts and an active market-entry pipeline in Japan and North America.
+
+Owner-operator, hands-on across the full cycle: sales and key accounts, production planning, procurement, and trade compliance — from TARIC classification and preferential origin to a customs advance ruling with Japan Customs under the EU-Japan EPA.
+
+I've built private-label projects for EU retail, taken products through supplier onboarding, labeling and claims compliance, and turned production offcuts into a standalone high-margin SKU. Currently automating SME food operations with LLM tools and computer vision.
+
+Pastila, if you haven't met it: premium fruit-based confectionery with meringue structure — naturally low-fat, and a genuinely underrated export category.
+
+Available for expert consultations on: confectionery &amp; snacks route-to-market and distribution, private label and EU retail entry, food trade compliance (TARIC and HS classification, rules of origin, landed cost, EU-Japan EPA advance ruling), and Russia/CIS consumer-market insights at a category level.</div></div>
+    <div class="step"><h4>Experience — Semers (Owner &amp; Managing Director)</h4>
+      <div class="copybox">Own and run a fruit-snack and confectionery manufacturing business (pastila, meringues, ice cream) with EU/Baltics B2B exports and ~100 active retail and distribution accounts.
+Hands-on across commercial, operational and trade-compliance functions — sales and key accounts, production planning, procurement, logistics.
+Deliver private-label projects for EU retail and distribution partners: recipes and specs, packaging, certification, logistics.
+Run full retail onboarding: supplier approval, labeling and claims compliance, shelf-life validation, EAN/logistics, margin structures, recall procedures.
+Handle food trade compliance: TARIC classification (incl. BOPP/CPP packaging film, China to EU), preferential rules of origin, landed-cost models; HACCP-based food safety system at the Riga plant.
+Turned production offcuts into a standalone high-margin SKU (35 g meringues) — a waste-to-revenue case in industrial confectionery.</div></div>
+    <div class="step"><h4>Experience — Belev (Head of International Sales &amp; Export Development)</h4>
+      <p class="note"><span class="flag warn">уточнить</span>Start date — точный месяц/год у Глеба (диапазон 2015–2016).</p>
+      <div class="copybox">Lead international sales and export development for premium fruit-based confectionery.
+Drive market entry and distributor-led route-to-market across the EU, Balkans and Scandinavia, including distribution partners Fruchtschmaus (Germany) and Me Gusto (Poland), and a drugstore retail channel in Poland via a distribution partner.
+Led a Japan Customs advance ruling for apple-based fruit confectionery under the EU-Japan EPA — prepared the technical dossier (production parameters, composition, classification argument) and assessed preferential origin.</div></div>
+    <div class="step"><h4>Skills (топ-3 закрепить)</h4>
+      <p><b>★:</b> Food Export · Trade Compliance · TARIC Classification</p>
+      <div class="copybox">Confectionery
+Fruit-Based Snacks
+Apple Snacks
+Shelf-Stable Desserts
+Private Label
+EU Retail
+Distributor Management
+Route-to-Market
+Rules of Origin
+EU-Japan EPA
+Landed Cost
+HS / Customs Classification
+HACCP
+Food Safety
+Supplier Onboarding
+Labeling &amp; Claims Compliance
+Category Management
+Market Entry
+FMCG
+Consumer Goods
+Russia/CIS Markets
+Food Manufacturing
+Packaging Compliance (PPWR)
+Food SME Operations
+AI / Automation</div></div>
+  </div></div>
+
+  <h2 class="section">▸ Что держать / не публиковать</h2>
+  <div class="card"><div class="instr">
+    <table>
+      <tr><th>Ретейлеры/клиенты</th><td>Называть можно: Fruchtschmaus (DE), Me Gusto (PL). Rossmann — без имени («drugstore channel via distribution partner»). Mercur, X5, любые РФ-контрагенты — НЕ в LinkedIn.</td></tr>
+      <tr><th>IFS</th><td><span class="flag warn">пусто</span>Пока статус не подтверждён — НЕ пишем «IFS certified». Используем HACCP (подтверждён). Как Глеб даст статус — добавим.</td></tr>
+      <tr><th>Числа</th><td>Публично: «30+ markets», «~100 B2B accounts». НЕ публично: объёмы (~700 т/мес), revenue, маржа, цены, payment terms.</td></tr>
+      <tr><th>Claims продукта</th><td>Публично-базово: «natural ingredients», «no artificial additives», «shelf-stable». Регулируемые (healthy/high-fiber/low-sugar/better-for-you) — НЕ как claim продукта (Reg. 1924/2006).</td></tr>
+      <tr><th>Не публикуем</th><td>Прайсы, контракты, рецептуры, поставщиков, дашборды, санкции/маршруты/банки.</td></tr>
+    </table></div></div>
+
+  <h2 class="section">▸ Для анкет сетей и звонков (не в LinkedIn)</h2>
+  <div class="card"><div class="instr">
+    <div class="step"><h4>Ставки</h4><p>Старт $150–200/ч · нишевые темы (EPA / advance ruling / trade compliance) — от $250 · цель после 3–5 звонков $300–400. Ниже $100 не берём. Screening до 15 мин — бесплатно.</p></div>
+    <div class="step"><h4>Compliance-posture</h4>
+      <p class="note">Latvia/EU base, personal-capacity. НЕ обсуждаем: санкции/обход, маршруты, банки, текущих контрагентов, всё под NDA.</p>
+      <div class="copybox">On counterparties: I don't discuss specific counterparties or contract terms. Happy to explain how this channel or category works in general.
+On sanctions: I don't advise on sanctions, restricted routes, or ways around trade restrictions — that's outside what I do. I can speak to fully compliant EU trade processes.</div></div>
+    <div class="step"><h4>Топ-3 темы монетизации</h4>
+      <p class="note">1) EU confectionery &amp; snacks: route-to-market + private label. 2) Hands-on food trade compliance (классификация, origin, advance rulings, landed cost) — редкий дорогой профиль. 3) Russia/CIS confectionery insights post-2022, category-level. Бонус: Food SME ops + AI.</p></div>
+  </div></div>
+
+  <h2 class="section">▸ Осталось от Глеба (✍️)</h2>
+  <div class="card"><div class="instr"><table>
+    <tr><th>Belev start date</th><td>точный месяц + год (диапазон 2015–2016)</td></tr>
+    <tr><th>IFS</th><td>сертификат / стадия / его роль</td></tr>
+    <tr><th>CN-коды</th><td>готовой продукции (pastila/meringue/zefir) из деклараций</td></tr>
+    <tr><th>Япония</th><td>были ли отгрузки после advance ruling</td></tr>
+    <tr><th>Featured</th><td>ссылки: каталог EN, фото PLMA Amsterdam, публикации</td></tr>
+    <tr><th>География</th><td>полный список 30–40 стран с датами (evidence pack)</td></tr>
+  </table></div></div>
+
+  <div class="note" style="text-align:center;padding:6px 20px 22px">v7 · на данных Master Profile Глеба. Copy-текст plain. IFS и точные CN/даты — добьём после ✍️.</div>
+
+</div></body></html>
