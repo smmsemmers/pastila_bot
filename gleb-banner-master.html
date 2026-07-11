@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { width:1584px; height:396px; overflow:hidden; }
+.banner {
+  width:1584px; height:396px; position:relative; overflow:hidden;
+  background: linear-gradient(120deg, #eef2ea 0%, #e7efe6 45%, #dbe7dd 100%);
+  font-family: Georgia, 'Times New Roman', serif;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+}
+/* faint fruit silhouettes on the left */
+.fruit { position:absolute; opacity:0.10; }
+.apple { left:120px; top:70px; width:250px; height:250px; background:#5a7a52;
+  border-radius:50% 50% 48% 48% / 55% 55% 45% 45%; }
+.apple:before { content:""; position:absolute; top:-18px; left:50%; width:10px; height:40px;
+  background:#5a7a52; transform:translateX(-50%) rotate(12deg); border-radius:6px; }
+.leaf { left:210px; top:60px; width:70px; height:40px; background:#5a7a52;
+  border-radius:0 100% 0 100%; transform:rotate(-25deg); opacity:0.10; position:absolute; }
+.berry { left:300px; top:210px; width:120px; height:130px; background:#7a8f5f;
+  border-radius:50% 50% 50% 50% / 45% 45% 60% 60%; opacity:0.09; position:absolute; }
+.content { text-align:center; z-index:2; padding:0 60px; }
+.company { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:19px; letter-spacing:0.28em; color:#5f7d59; text-transform:uppercase; margin-bottom:12px; }
+.title { font-size:58px; font-weight:700; color:#22402a; letter-spacing:0.5px; margin-bottom:22px; }
+.pills { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-bottom:12px;
+  max-width:1200px; }
+.pill { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  border:1.5px solid #86a07e; border-radius:22px; padding:7px 20px; font-size:16px; color:#3e5c40;
+  background:rgba(255,255,255,0.35); }
+.compliance { font-family:-apple-system,'Segoe UI',Arial,sans-serif;
+  font-size:16px; color:#3e5c40; margin-top:8px; }
+.compliance b { color:#22402a; }
+</style>
+</head>
+<body>
+<div class="banner">
+  <div class="fruit apple"></div>
+  <div class="leaf"></div>
+  <div class="fruit berry"></div>
+  <div class="content">
+    <div class="company">Semers Group</div>
+    <div class="title">Food Export &amp; Trade Compliance</div>
+    <div class="pills">
+      <span class="pill">CEO</span>
+      <span class="pill">Food Manufacturing &amp; EU Exports</span>
+      <span class="pill">International Branding &amp; Marketing</span>
+    </div>
+    <div class="pills">
+      <span class="pill">Premium Confectionery &amp; Fruit Snacks</span>
+      <span class="pill">Private Label</span>
+    </div>
+    <div class="compliance"><b>Trade Compliance:</b> TARIC &middot; Rules of Origin &middot; EU-Japan EPA &middot; Export to EU, USA, China, GCC</div>
+  </div>
+</div>
+</body>
+</html>
