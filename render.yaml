@@ -11,6 +11,13 @@ services:
       # Закрепляем 3.12 (Render по умолчанию берёт самую новую версию).
       - key: PYTHON_VERSION
         value: "3.12.7"
+      # BRIDGE_PRIMARY=true: главный ассистент — бридж (Claude Code). Task-бот молчит
+      # на свободный текст/голос/файлы/инсайты, отвечает только на свои команды.
+      # Закреплено явно, чтобы «#топики»-инсайты не спамили чат (была причина — на
+      # инстансе Render эта переменная оказалась false). Blueprint-значение имеет
+      # приоритет; если в дашборде висит ручной BRIDGE_PRIMARY=false — убрать его.
+      - key: BRIDGE_PRIMARY
+        value: "true"
       - key: BOT_TOKEN
         sync: false
       - key: GROUP_CHAT_ID
