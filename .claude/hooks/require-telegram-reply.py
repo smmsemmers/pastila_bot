@@ -80,6 +80,25 @@ def used_reply(entry):
     return False
 
 
+# Рендер меню-сетки/кнопок идёт через Bash (menu.sh / send-buttons.sh / прямой
+# вызов Telegram API) — это тоже отправка сообщения пользователю, поэтому
+# засчитываем как ответ (иначе навигация по сетке требовала бы лишних reply).
+SEND_MARKERS = ("menu.sh", "send-buttons.sh", "api.telegram.org")
+
+
+def sent_via_script(entry):
+    msg = entry.get("message") or {}
+    content = msg.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use" \
+                    and block.get("name") == "Bash":
+                cmd = str((block.get("input") or {}).get("command", ""))
+                if any(m in cmd for m in SEND_MARKERS):
+                    return True
+    return False
+
+
 def main():
     try:
         data = json.load(sys.stdin)
