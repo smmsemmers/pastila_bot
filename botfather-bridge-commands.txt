@@ -16,3 +16,4 @@ fable - 🍓 Ядро → Fable 5
 welcome - 🍬 Привет и что умею
 help - 🍭 Справка
 id - 🆔 Показать chat_id и user_id
+bots - 🤖 Боты команды и их команды
