@@ -19,15 +19,17 @@ SWITCH_FLAG="$HOME/pastila_bot/.bridge-switch"
 
 # ── Пикер модели при старте ─────────────────────────────────────────
 echo "🚀 Мост @pastila_code_remote_bot — выбор модели ядра:"
-echo "   1) Sonnet 4.6  — быстрый и дешёвый (по умолчанию)"
-echo "   2) Opus 4.8    — максимум качества"
-echo "   3) Fable 5     — экспериментальная"
-printf "Выбор [1/2/3, Enter = Sonnet, 5 сек]: "
+echo "   1) Sonnet 5   — быстрый и дешёвый"
+echo "   2) Opus 5     — максимум качества (по умолчанию)"
+echo "   3) Fable 5    — для самых сложных вызовов"
+echo "   4) Haiku 4.5  — самый быстрый"
+printf "Выбор [1/2/3/4, Enter = Opus 5, 5 сек]: "
 read -t 5 choice
 case "$choice" in
-  2) echo opus   > "$MODEL_FILE" ;;
-  3) echo fable  > "$MODEL_FILE" ;;
-  *) echo sonnet > "$MODEL_FILE" ;;
+  1) echo claude-sonnet-5 > "$MODEL_FILE" ;;
+  3) echo claude-fable-5  > "$MODEL_FILE" ;;
+  4) echo claude-haiku-4-5 > "$MODEL_FILE" ;;
+  *) echo claude-opus-5   > "$MODEL_FILE" ;;
 esac
 echo ""
 
