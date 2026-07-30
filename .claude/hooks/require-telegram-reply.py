@@ -144,8 +144,11 @@ def main():
     if not inbound_tg:
         return  # не из Telegram или только от ботов — ничего не навязываем
 
-    # был ли вызов reply в этом ходе?
-    replied = any(e.get("type") == "assistant" and used_reply(e) for e in turn)
+    # был ли вызов reply ИЛИ отправка сетки/кнопок через скрипт в этом ходе?
+    replied = any(
+        e.get("type") == "assistant" and (used_reply(e) or sent_via_script(e))
+        for e in turn
+    )
     if replied:
         return  # всё хорошо
 
