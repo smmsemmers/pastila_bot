@@ -110,6 +110,9 @@ if screen in NAV:
     text=title
 elif base in ITEMS:
     name,short,info,pl,primary=ITEMS[base]
+    if base in MODEL_ITEM:
+        full,disp=MODEL_ITEM[base]
+        primary=None if full==cur_full else "🔄 Переключить на "+disp
     if screen.endswith("_info"):
         text=info
         kb=[]
