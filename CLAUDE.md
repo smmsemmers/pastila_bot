@@ -149,7 +149,12 @@ Task-бот теперь в файлы и свободный текст сам �
 Новые разделы: `🎛 Режимы`→`modes` (💬 Чат→`md_chat` · 💻 Код→`md_code` · 🎨 Дизайн→`md_design` · 🧩 Cowork→`md_cowork`).
 Модели: полный список — `🍎 Opus 5`→`mopus5` · `🍎 Opus 4.8`(✓ ядро) · `🍎 Opus 4.7`→`mopus47` · `🍎 Opus 4.6`→`mopus46` ·
 `🍎 Opus 3`→`mopus3` · `🍏 Sonnet 5`(ядро) · `🍏 Sonnet 4.6`→`msonnet46` · `🍓 Fable 5`(ядро) · `🍡 Haiku 4.5`→`mhaiku`.
-Ядро реально переключает только Opus(4.8)/Sonnet(5)/Fable(5) через `switch-bridge-model.sh`; остальные — инфо-карточки.
+Ядро РЕАЛЬНО переключается на любую проверенную модель через `switch-bridge-model.sh <модель>`
+(алиас opus|sonnet|fable|haiku или полное имя). Проверено (принимает ядро claude-code 2.1.205):
+claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5, claude-sonnet-4-6,
+claude-fable-5, claude-haiku-4-5. НЕ доступна: Opus 3. `.bridge-model` хранит ПОЛНОЕ имя; лаунчер
+`start-code-bridge.command` передаёт его в `claude --model`. Кнопка `🔄 Переключить на <модель>` в карточке
+модели → запусти `~/pastila_bot/switch-bridge-model.sh <полное-имя>` (например `claude-opus-5`); это НОВАЯ сессия.
 Уровни (Effort): `⚡ Уровни (Effort)`→`levels` (NAV) → `🟢 Low`→`lvl_low` · `🟡 Medium`→`lvl_med` · `🟠 High`→`lvl_high` ·
 `🔴 Extra`→`lvl_extra` · `⚫ Max`→`lvl_max`; `⬅️ К уровням`→`levels`. Уровни — инфо (Effort задаётся при старте ядра).
 Про бот доп.: `🏢 Про Anthropic`→`anthropic`.
