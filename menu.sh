@@ -18,9 +18,16 @@ with open(os.path.expanduser("~/.claude/channels/telegram/.env")) as f:
             k,v=line.split("=",1); env[k]=v
 token=env.get("TELEGRAM_BOT_TOKEN") or env.get("BOT_TOKEN") or env.get("TOKEN")
 try: cur=open(os.path.expanduser("~/pastila_bot/.bridge-model")).read().strip()
-except Exception: cur="opus"
-mn={"sonnet":"🍏 Sonnet 5","opus":"🍎 Opus 4.8","fable":"🍓 Fable 5"}
-def mmark(k): return mn[k]+(" ✓" if k==cur else "")
+except Exception: cur="claude-opus-5"
+# старые алиасы в .bridge-model → полные имена (для корректной отметки ✓)
+alias_full={"opus":"claude-opus-4-8","sonnet":"claude-sonnet-5","fable":"claude-fable-5","haiku":"claude-haiku-4-5"}
+cur_full=alias_full.get(cur,cur)
+def mkf(full,disp): return disp+(" ✓" if full==cur_full else "")
+# ключ пункта-модели → (полное имя для переключения, короткое отображение)
+MODEL_ITEM={"mopus5":("claude-opus-5","Opus 5"),"mopus":("claude-opus-4-8","Opus 4.8"),
+ "mopus47":("claude-opus-4-7","Opus 4.7"),"mopus46":("claude-opus-4-6","Opus 4.6"),
+ "msonnet":("claude-sonnet-5","Sonnet 5"),"msonnet46":("claude-sonnet-4-6","Sonnet 4.6"),
+ "mfable":("claude-fable-5","Fable 5"),"mhaiku":("claude-haiku-4-5","Haiku 4.5")}
 
 # NAV: (заголовок, ряды кнопок, back_label|None, placeholder)
 NAV={
