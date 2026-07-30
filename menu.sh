@@ -1,9 +1,8 @@
 #!/bin/zsh
 # menu.sh <chat_id> <screen>
-# Рисует ИНЛАЙН-меню бриджа (кнопки в сообщении, callback_data). Уживается с кнопкой-словом «Меню»
-# (setChatMenuButton type=commands) — как у VPN-бота: слева «Меню», в сообщении инлайн-навигация.
-# Экраны: home | models | bots | botbridge | bottask | botgpt | id | about | integrations | subs | help
-# Токен из ~/.claude/channels/telegram/.env (не печатается).
+# Нижняя сетка (reply-клавиатура) бриджа с навигацией и «назад до последнего».
+# Экраны: home | models | bots | botbridge | bottask | botgpt | about | plugins | functions | connectors
+# Порядок разделов задан Леной. Токен из ~/.claude/channels/telegram/.env (не печатается).
 
 CHAT_ID="$1"; SCREEN="${2:-home}"
 python3 - "$CHAT_ID" "$SCREEN" <<'PY'
@@ -16,61 +15,52 @@ with open(os.path.expanduser("~/.claude/channels/telegram/.env")) as f:
         if "=" in line and not line.startswith("#"):
             k,v=line.split("=",1); env[k]=v
 token=env.get("TELEGRAM_BOT_TOKEN") or env.get("BOT_TOKEN") or env.get("TOKEN")
-def b(text,data=None,url=None):
-    d={"text":text}
-    if url: d["url"]=url
-    else: d["callback_data"]=data
-    return d
-HOME=[b("☰ Меню","nav_home")]
+def t(x): return {"text":x}
+BACK=[t("⬅️ Назад в меню")]
 S={
- "home":{"text":"☰ МЕНЮ — выбери раздел. Слева кнопка «Меню» = все команды, тут кнопки-разделы:",
-   "kb":[[b("🍎 Модели","nav_models"),b("🍫 Боты","nav_bots")],
-         [b("🍬 ID","nav_id"),b("ℹ️ О боте","nav_about")],
-         [b("🔌 Интеграции","nav_integr"),b("🧁 Велком","nav_welcome")],
-         [b("❓ Помощь","nav_help"),b("🍭 Подписки","nav_subs")]]},
+ "home":{"text":"☰ МЕНЮ — выбери раздел (навигация в сетке снизу, ⬅️ Назад вернёт сюда):",
+   "kb":[[t("🍎 Доступные модели"),t("🍫 Больше ботов")],
+         [t("ℹ️ Про этот бот"),t("🔌 Доступные плагины")],
+         [t("⚙️ Функции"),t("🔗 Коннекторы")]],
+   "ph":"☰ Меню — выбери раздел…"},
  "models":{"text":("🍎 ДОСТУПНЫЕ МОДЕЛИ. Сейчас: 🍎 Opus 4.8.\n\n"
      "🍏 Sonnet 4.6 — быстрая и лёгкая: повседневное, короткие тексты, простые правки.\n"
      "🍎 Opus 4.8 — самая умная: анализ, код, большие разборы, стратегия.\n"
      "🍓 Fable 5 — тексты и креатив: живые тексты, посты.\n\n"
      "Коротко: быстро → Sonnet · сложно → Opus · красиво → Fable. Жми, чтобы переключить:"),
-   "kb":[[b("🍏 Sonnet 4.6","set_sonnet"),b("🍎 Opus 4.8","set_opus")],
-         [b("🍓 Fable 5","set_fable")], HOME]},
- "bots":{"text":"🍫 БОЛЬШЕ БОТОВ. Нажми бота — описание + кнопка «добавить в группу»:",
-   "kb":[[b("🍎 Бридж (Claude)","bot_bridge"),b("🗂 Task-бот","bot_task")],
-         [b("🤖 GPT-помощник","bot_gpt")], HOME]},
- "botbridge":{"text":("🍎 БРИДЖ (Claude Code) — @pastila_code_remote_bot\n\nГлавный ассистент канала: "
-     "разбор файлов и экспортов Claude, Notion/Drive/Gmail/Calendar, картинки, тексты, задачи, смена модели."),
-   "kb":[[b("➕ Добавить в группу",url="https://t.me/pastila_code_remote_bot?startgroup=true")],
-         [b("⬅️ Боты","nav_bots"),b("☰ Меню","nav_home")]]},
+   "kb":[[t("🍏 Sonnet 4.6"),t("🍎 Opus 4.8")],[t("🍓 Fable 5")], BACK],"ph":"Выбери модель…"},
+ "bots":{"text":"🍫 БОЛЬШЕ БОТОВ. Нажми бота — описание + добавить в группу:",
+   "kb":[[t("🍎 Бридж (Claude)"),t("🗂 Task-бот")],[t("🤖 GPT-помощник")], BACK],"ph":"Выбери бота…"},
+ "botbridge":{"text":("🍎 БРИДЖ (Claude Code) — @pastila_code_remote_bot\n\nГлавный ассистент канала: разбор "
+     "файлов и экспортов Claude, Notion/Drive/Gmail/Calendar, картинки, тексты, задачи, смена модели."),
+   "kb":[[t("➕ Добавить бридж в группу")],[t("⬅️ К ботам"),t("☰ Меню")]],"ph":"⬅️ Назад"},
  "bottask":{"text":("🗂 TASK-БОТ — @PastilaTaskBot\n\nЗадачи и напоминания: /new, /list, /digest, /alerts. "
      "Держит общую таблицу команды, шлёт расписания."),
-   "kb":[[b("➕ Добавить в группу",url="https://t.me/PastilaTaskBot?startgroup=true")],
-         [b("⬅️ Боты","nav_bots"),b("☰ Меню","nav_home")]]},
+   "kb":[[t("➕ Добавить Task в группу")],[t("⬅️ К ботам"),t("☰ Меню")]],"ph":"⬅️ Назад"},
  "botgpt":{"text":("🤖 GPT-ПОМОЩНИК — @pastila_gPT_remote_bot\n\nСвободный чат с GPT: напиши вопрос. /start, /help."),
-   "kb":[[b("➕ Добавить в группу",url="https://t.me/pastila_gPT_remote_bot?startgroup=true")],
-         [b("⬅️ Боты","nav_bots"),b("☰ Меню","nav_home")]]},
- "id":{"text":("🍬 ID. Этот чат: "+str(chat_id)+"\n\nКоманда /id показывает id чата и твой user_id "
-     "(в группе — id группы). Нужно, чтобы добавить новую группу в доступ бота."),"kb":[HOME]},
- "about":{"text":("ℹ️ О БОТЕ. Главный ассистент канала на базе Claude Code: разбор файлов и экспортов Claude, "
-     "Notion/Drive/Gmail/Calendar, картинки, тексты, смена модели.\n\nВладелец — Лена "
-     "(в прошлом @elenaisanewleet, сейчас @sorrbouthat). По вопросам и доступам — к ней."),"kb":[HOME]},
- "integrations":{"text":("🔌 ИНТЕГРАЦИИ (что подключено и зачем):\n\n"
-     "• Notion — база знаний/страницы: «возьми из Notion …».\n"
-     "• Google Drive — файлы/документы: «найди на Диске …».\n"
-     "• Gmail — почта: «найди письмо …».\n"
-     "• Google Calendar — события: «что в календаре …».\n"
-     "• Asana — задачи проектов.\n\n"
-     "Просто напиши задачу словами — сам обращусь к нужной интеграции. "
-     "Новые коннекторы подключаются в настройках claude.ai (из Telegram создать нельзя)."),"kb":[HOME]},
- "subs":{"text":("🍭 ПОДПИСКИ — в разработке. Планируются тарифы по токенам в день: анлимит · средний · меньший. "
-     "Пока пользование свободное."),"kb":[HOME]},
- "help":{"text":("❓ ПОМОЩЬ. Напиши задачу или пришли файл (PDF, Excel, JSON, архив). Кнопка «Меню» слева — "
-     "все команды. Разделы — кнопками в этом меню."),"kb":[HOME]},
+   "kb":[[t("➕ Добавить GPT в группу")],[t("⬅️ К ботам"),t("☰ Меню")]],"ph":"⬅️ Назад"},
+ "about":{"text":("ℹ️ ПРО ЭТОТ БОТ. Главный ассистент канала на базе Claude Code: разбор файлов и экспортов "
+     "Claude, Notion/Drive/Gmail/Calendar, картинки, тексты, смена модели ядра.\n\n"
+     "Владелец — Лена (в прошлом @elenaisanewleet, сейчас @sorrbouthat). По вопросам и доступам — к ней.\n\n"
+     "id этого чата: "+str(chat_id)+" (команда /id)."),"kb":[BACK],"ph":"⬅️ Назад в меню"},
+ "plugins":{"text":("🔌 ДОСТУПНЫЕ ПЛАГИНЫ. Плагины — расширения бота. Сейчас активны:\n"
+     "• Telegram — связь с этим чатом.\n• Frontend-design — помощь с дизайном интерфейсов.\n"
+     "• Atlassian — Jira/Confluence.\n\nНовые плагины подключаются в настройках Claude Code."),
+   "kb":[BACK],"ph":"⬅️ Назад в меню"},
+ "functions":{"text":("⚙️ ФУНКЦИИ — что я умею:\n• разбор файлов (PDF, Excel, JSON, архивы) и экспортов Claude;\n"
+     "• саммари, план, стратегия, приоритеты, задачи, риски, цифры, советы;\n• поиск, тексты и правки;\n"
+     "• работа с картинками;\n• задачи в общую таблицу (подхватит Task-бот);\n• смена модели ядра.\n\n"
+     "Просто напиши, что нужно, или пришли файл."),"kb":[BACK],"ph":"⬅️ Назад в меню"},
+ "connectors":{"text":("🔗 КОННЕКТОРЫ — подключённые источники:\n• Notion — база знаний/страницы.\n"
+     "• Google Drive — файлы и документы.\n• Gmail — почта.\n• Google Calendar — события.\n• Asana — задачи.\n\n"
+     "Пиши словами («возьми из Notion…», «найди письмо…») — сам обращусь к нужному. "
+     "Создать новый коннектор из Telegram нельзя — это в настройках claude.ai."),"kb":[BACK],"ph":"⬅️ Назад в меню"},
 }
 s=S.get(screen,S["home"])
-body={"chat_id":chat_id,"text":s["text"],"reply_markup":json.dumps({"inline_keyboard":s["kb"]})}
+kb={"keyboard":s["kb"],"resize_keyboard":True,"is_persistent":True,"input_field_placeholder":s["ph"]}
+body={"chat_id":chat_id,"text":s["text"],"reply_markup":json.dumps(kb)}
 req=urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage",
     data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
 d=json.load(urllib.request.urlopen(req,timeout=30))
-print("inline menu '"+screen+"' sent:", d.get("ok"))
+print("menu '"+screen+"' sent:", d.get("ok"))
 PY
