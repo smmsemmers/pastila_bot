@@ -19,7 +19,7 @@ with open(os.path.expanduser("~/.claude/channels/telegram/.env")) as f:
 token=env.get("TELEGRAM_BOT_TOKEN") or env.get("BOT_TOKEN") or env.get("TOKEN")
 try: cur=open(os.path.expanduser("~/pastila_bot/.bridge-model")).read().strip()
 except Exception: cur="opus"
-mn={"sonnet":"🍏 Sonnet 4.6","opus":"🍎 Opus 4.8","fable":"🍓 Fable 5"}
+mn={"sonnet":"🍏 Sonnet 5","opus":"🍎 Opus 4.8","fable":"🍓 Fable 5"}
 def mmark(k): return mn[k]+(" ✓" if k==cur else "")
 
 # NAV: (заголовок, ряды кнопок, back_label|None, placeholder)
